@@ -76,7 +76,7 @@ def resolve_repo_url(url: str, base_dir: Path) -> str:
     return str(p)
 
 
-def generate_sky_config(manifest: dict, target_filter: str = None, config_path: str = "sync-manifest.yaml") -> str:
+def generate_sky_config(manifest: dict, target_filter: str = "", config_path: str = "sync-manifest.yaml") -> str:
     targets = manifest.get("targets", {})
     base_dir = Path(config_path).parent.resolve()
 
