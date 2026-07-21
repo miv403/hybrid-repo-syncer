@@ -10,6 +10,7 @@ else
 fi
 
 cd hybrid && git init
+git config receive.denyCurrentBranch updateInstead
 touch .gitignore && git add . && git commit -m "hybrid::initial commit"
 
 if [ ! -d "../repo-$N" ];

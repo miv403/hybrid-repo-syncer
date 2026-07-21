@@ -1,0 +1,29 @@
+# hybrid-syncer configuration manifest
+hybrid_repo: "./sample-repos/hybrid"
+default_branch: "master"
+
+authoring:
+  default_email: "syncer@example.com"
+  default_name: "Hybrid Syncer"
+
+targets:
+  repo-1-a:
+    origin:
+      url: "./sample-repos/repo-1.git"
+      path: "a"
+    hybrid:
+      path: "repo-1/a"
+
+  repo-1-b:
+    origin:
+      url: "./sample-repos/repo-1.git"
+      path: "b"
+    hybrid:
+      path: "repo-1/b"
+
+  repo-2-a:
+    origin:
+      url: "./sample-repos/repo-2.git"
+      path: "a"
+    hybrid:
+      path: "repo-2/a"

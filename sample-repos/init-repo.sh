@@ -16,4 +16,5 @@ echo "file a" > a/file.a
 git add a && git commit -m "added a/file.a"
 echo "file b" > b/file.b
 git add b && git commit -m "added b/file.b"
+git push origin HEAD
 
