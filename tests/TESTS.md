@@ -8,6 +8,13 @@ This directory contains interactive test scenario scripts designed to validate t
 
 All test scripts are written in Python 3 and support both **interactive step-by-step mode** (with breakpoints and diagnostic prints) and **automated non-interactive mode**.
 
+### Master Test Suite Runner
+To execute the entire test suite sequentially and output a unified pass/fail summary table:
+
+```bash
+python3 tests/run_all.py
+```
+
 ### Interactive Mode (Default)
 Step-by-step execution with interactive breakpoints (`[BREAKPOINT]`), showing detailed diagnostic info (Git logs, file trees, diffs) at key mid-points.
 
@@ -21,7 +28,7 @@ python3 tests/test_06_interleaved_commits_mapped_unmapped.py
 ```
 
 ### Automated / Non-Interactive Mode
-To run without interactive pause prompts (ideal for CI/CD or rapid validation):
+To run individual test scripts without interactive pause prompts:
 
 ```bash
 python3 tests/test_01_unmapped_path_isolation.py --auto
@@ -35,6 +42,16 @@ python3 tests/test_06_interleaved_commits_mapped_unmapped.py --auto
 ### Flags & Options
 - `--auto` (`-y`): Skip breakpoints and run continuously to completion.
 - `--skip-reset`: Skip sample repository clean reset step.
+
+---
+
+## 🛠️ Test Suite Architecture
+
+The test suite uses a centralized architecture for DRY maintainability:
+
+- **`tests/common.py`**: Shared helper module providing Git execution (`run_cmd`), sample repository resets (`reset_sample_repos`), diagnostic reporting (`print_file_tree`, `print_git_log`, `print_diagnostic`), interactive breakpoints (`breakpoint_prompt`), and CLI argument parsing.
+- **`tests/run_all.py`**: Master test runner executing all scenario scripts sequentially and reporting unified pass/fail results.
+- **Scenario Scripts (`test_01` through `test_06`)**: Individual scenario scripts focusing strictly on defining Git actions and verifying outcomes.
 
 ---
 
