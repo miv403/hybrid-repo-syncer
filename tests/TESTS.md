@@ -14,6 +14,7 @@ Step-by-step execution with interactive breakpoints (`[BREAKPOINT]`), showing de
 ```bash
 python3 tests/test_01_unmapped_path_isolation.py
 python3 tests/test_02_structural_conflict_rename_vs_modify.py
+python3 tests/test_03_asymmetric_destructive_modify_vs_delete.py
 ```
 
 ### Automated / Non-Interactive Mode
@@ -22,6 +23,7 @@ To run without interactive pause prompts (ideal for CI/CD or rapid validation):
 ```bash
 python3 tests/test_01_unmapped_path_isolation.py --auto
 python3 tests/test_02_structural_conflict_rename_vs_modify.py --auto
+python3 tests/test_03_asymmetric_destructive_modify_vs_delete.py --auto
 ```
 
 ### Flags & Options
@@ -83,7 +85,7 @@ python3 tests/test_02_structural_conflict_rename_vs_modify.py --auto
    - *Breakpoint 3*: User inspects hybrid content modification.
 
 4. **Step 4: Execution (`hybrid-syncer.py sync`)**
-   - Run `python3 hybrid-syncer.py sync -t repo-1-a` to execute bi-directional sync under structural divergence.
+   - Run `python3 hybrid-syncer.py sync -t repo-1-a --init-history` to execute bi-directional sync under structural divergence.
    - *Diagnostic Output*: Print stdout, stderr, and exit code from Copybara execution.
    - *Breakpoint 4*: User inspects sync execution outcome.
 
@@ -91,5 +93,37 @@ python3 tests/test_02_structural_conflict_rename_vs_modify.py --auto
    - **Error / Conflict Raised Check**: Evaluate if Copybara detected structural divergence and raised an error.
    - **Silent Duplication Risk Check**: Check if both `file.a` AND `file_renamed.a` persist in either repository.
    - **Silent Deletion Risk Check**: Check if hybrid's modified content was overwritten or deleted without trace.
+
+---
+
+### Scenario 3: Asymmetric Destructive Operation (Modify vs. Delete)
+- **Script**: [`tests/test_03_asymmetric_destructive_modify_vs_delete.py`](file:///home/miv/workspace/staj2026/git-syncer/tests/test_03_asymmetric_destructive_modify_vs_delete.py)
+- **Objective**: Test what happens when origin updates a file's contents while hybrid completely deletes the file. Evaluate if Copybara detects destination/origin state mismatch or quietly recreates the file in hybrid.
+
+#### Test Workflow:
+1. **Step 1: Setup & Baseline Sync**
+   - Reset sample repos to clean initial state.
+   - Run `python3 hybrid-syncer.py push --init-history` to establish baseline with `file.a` in both repos.
+   - *Breakpoint 1*: User inspects baseline.
+
+2. **Step 2: Origin Action (Content Modification)**
+   - Append new lines to `a/file.a` in origin `repo-1` and push to `repo-1.git`.
+   - *Diagnostic Output*: Print origin commit log and diff.
+   - *Breakpoint 2*: User inspects origin modification.
+
+3. **Step 3: Hybrid Action (File Deletion)**
+   - Delete `repo-1/a/file.a` in hybrid using `git rm` and commit.
+   - *Diagnostic Output*: Print hybrid commit log and updated hybrid file tree.
+   - *Breakpoint 3*: User inspects file deletion in hybrid.
+
+4. **Step 4: Execution (`hybrid-syncer.py push`)**
+   - Run `python3 hybrid-syncer.py push -t repo-1-a` to attempt syncing origin's modification into hybrid.
+   - *Diagnostic Output*: Print stdout, stderr, exit code, and updated file trees.
+   - *Breakpoint 4*: User inspects push execution outcome.
+
+5. **Step 5: Verification & Behavior Analysis**
+   - Check if Copybara raised an explicit error/conflict.
+   - Check if `repo-1/a/file.a` was quietly recreated in hybrid with origin's modified content.
+   - Check if hybrid's file deletion was preserved or overridden.
 
 ---
