@@ -27,7 +27,7 @@ HEADER = "\033[95m\033[1m"
 OKBLUE = "\033[94m"
 OKCYAN = "\033[96m"
 OKGREEN = "\033[92m\033[1m"
-WARNING = "\033[93m"
+WARNING = "\033[93m\033[1m"
 FAIL = "\033[91m\033[1m"
 ENDC = "\033[0m"
 BOLD = "\033[1m"
@@ -234,22 +234,30 @@ def main():
     print(f"{BOLD}Risk Evaluation:{ENDC}")
     print(f"{'-' * 75}")
 
-    def print_risk(label, detected, description):
-        status_str = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}" if detected else f"{OKGREEN}[NOT DETECTED / SAFE]{ENDC}"
+    def print_risk(label, status_str, description):
         print(f"  {status_str} {label}")
         print(f"         └─ {description}")
 
-    print_risk(
-        "Copybara Revision Lookup Error Raised",
-        push_failed or revision_error_detected,
-        f"Copybara raised an explicit error (code {push_res.returncode}) on force-pushed history." if (push_failed or revision_error_detected) else "Copybara did not raise an error on force-pushed history."
-    )
+    if push_failed or revision_error_detected:
+        copybara_status = f"{FAIL}[DETECTED / ERROR RAISED]{ENDC}"
+        copybara_desc = f"Copybara raised an explicit error (code {push_res.returncode}) on force-pushed history."
+    elif not push_failed:
+        copybara_status = f"{WARNING}[NOT DETECTED]{ENDC}"
+        copybara_desc = "Copybara completed without raising a revision error (silently processed force-pushed history without halting)."
+    else:
+        copybara_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
+        copybara_desc = "Copybara completed without raising a revision error."
 
-    print_risk(
-        "Silent Re-sync / Duplicate Commit Risk on Force Push",
-        not push_failed,
-        "Copybara silently processed the force-pushed commit instead of halting for history verification." if not push_failed else "Copybara halted on force push."
-    )
+    print_risk("Copybara Revision Lookup Error Raised", copybara_status, copybara_desc)
+
+    if not push_failed:
+        resync_status = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}"
+        resync_desc = "Copybara silently processed the force-pushed commit instead of halting for history verification."
+    else:
+        resync_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
+        resync_desc = "Copybara halted on force push."
+
+    print_risk("Silent Re-sync / Duplicate Commit Risk on Force Push", resync_status, resync_desc)
     print(f"{'-' * 75}\n")
 
     print(f"{OKGREEN}🎉 TEST SCENARIO 5 COMPLETED. Diagnostics & risk analysis reported above.{ENDC}\n")
