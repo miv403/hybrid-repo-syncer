@@ -29,7 +29,7 @@ HEADER = "\033[95m\033[1m"
 OKBLUE = "\033[94m"
 OKCYAN = "\033[96m"
 OKGREEN = "\033[92m\033[1m"
-WARNING = "\033[93m"
+WARNING = "\033[93m\033[1m"
 FAIL = "\033[91m\033[1m"
 ENDC = "\033[0m"
 BOLD = "\033[1m"
@@ -268,28 +268,39 @@ def main():
     print(f"{BOLD}Risk Evaluation:{ENDC}")
     print(f"{'-' * 75}")
 
-    def print_risk(label, is_detected, description):
-        status_str = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}" if is_detected else f"{OKGREEN}[NOT DETECTED]{ENDC}"
+    def print_risk(label, status_str, description):
         print(f"  {status_str} {label}")
         print(f"         └─ {description}")
 
-    print_risk(
-        "Copybara Error / Conflict Raised",
-        sync_failed,
-        f"Copybara returned exit code {sync_res.returncode} due to structural divergence." if sync_failed else "Copybara completed without raising a sync error."
-    )
+    if sync_failed:
+        copybara_status = f"{FAIL}[DETECTED / ERROR RAISED]{ENDC}"
+        copybara_desc = f"Copybara returned exit code {sync_res.returncode} due to structural divergence."
+    elif hybrid_mod_deleted or silent_duplication:
+        copybara_status = f"{WARNING}[NOT DETECTED]{ENDC}"
+        copybara_desc = "Copybara completed without raising a sync error (uncaught structural conflict leading to data loss)."
+    else:
+        copybara_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
+        copybara_desc = "Copybara completed without raising a sync error."
 
-    print_risk(
-        "Silent Duplication Risk",
-        silent_duplication,
-        "Both old file.a and new file_renamed.a co-exist in repo." if silent_duplication else "No duplicate file creation detected."
-    )
+    print_risk("Copybara Error / Conflict Raised", copybara_status, copybara_desc)
 
-    print_risk(
-        "Silent Deletion Risk",
-        hybrid_mod_deleted,
-        "Hybrid modified content was lost during sync." if hybrid_mod_deleted else "Hybrid modified content preserved in at least one repo location."
-    )
+    if silent_duplication:
+        dup_status = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}"
+        dup_desc = "Both old file.a and new file_renamed.a co-exist in repo."
+    else:
+        dup_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
+        dup_desc = "No duplicate file creation detected."
+
+    print_risk("Silent Duplication Risk", dup_status, dup_desc)
+
+    if hybrid_mod_deleted:
+        del_status = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}"
+        del_desc = "Hybrid modified content was lost during sync."
+    else:
+        del_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
+        del_desc = "Hybrid modified content preserved in at least one repo location."
+
+    print_risk("Silent Deletion Risk", del_status, del_desc)
     print(f"{'-' * 75}\n")
 
     print(f"{OKGREEN}🎉 TEST SCENARIO 2 COMPLETED. Diagnostics & risk analysis reported above.{ENDC}\n")
