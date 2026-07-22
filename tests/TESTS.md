@@ -68,6 +68,18 @@ python3 tests/test_06_interleaved_commits_mapped_unmapped.py --auto
    - **Assertion 2**: Unmapped path `repo-1/c` and `unmapped.txt` do **NOT** leak into origin `repo-1`.
    - **Assertion 3**: Copybara executes subsequent push/pull operations without errors, and `repo-1/c/unmapped.txt` remains intact inside `hybrid`.
 
+```
+Assertion Results Summary:
+---------------------------------------------------------------------------
+  [PASS] 1. a/file.a in origin (repo-1) received update
+         └─ Content: 'file a updated inside hybrid repo'
+  [PASS] 2. repo-1/c and unmapped.txt did NOT appear in origin (repo-1)
+         └─ Origin path exists: False
+  [PASS] 3. Copybara executed subsequent push/pull cleanly & repo-1/c remains intact in hybrid
+         └─ Hybrid unmapped file exists: True
+---------------------------------------------------------------------------
+```
+
 ---
 
 ### Scenario 2: Structural Conflict (File Rename vs. Concurrent Modification)
@@ -99,6 +111,18 @@ python3 tests/test_06_interleaved_commits_mapped_unmapped.py --auto
    - **Error / Conflict Raised Check**: Evaluate if Copybara detected structural divergence and raised an error.
    - **Silent Duplication Risk Check**: Check if both `file.a` AND `file_renamed.a` persist in either repository.
    - **Silent Deletion Risk Check**: Check if hybrid's modified content was overwritten or deleted without trace.
+
+```
+Risk Evaluation:
+---------------------------------------------------------------------------
+  [NOT DETECTED] Copybara Error / Conflict Raised
+         └─ Copybara completed without raising a sync error (uncaught structural conflict leading to data loss).
+  [NOT DETECTED] Silent Duplication Risk
+         └─ No duplicate file creation detected.
+  [DETECTED / RISK ACTIVE] Silent Deletion Risk
+         └─ Hybrid modified content was lost during sync.
+---------------------------------------------------------------------------
+```
 
 ---
 
@@ -132,6 +156,18 @@ python3 tests/test_06_interleaved_commits_mapped_unmapped.py --auto
    - Check if `repo-1/a/file.a` was quietly recreated in hybrid with origin's modified content.
    - Check if hybrid's file deletion was preserved or overridden.
 
+```
+Outcome Evaluation:
+---------------------------------------------------------------------------
+  [NO] Copybara Explicit Error Raised
+         └─ Copybara executed with exit code 0 without raising an error.
+  [YES] File Quietly Recreated in Hybrid
+         └─ Copybara recreated repo-1/a/file.a in hybrid with origin's modified content, overriding hybrid's deletion.
+  [NO] Hybrid Deletion Preserved
+         └─ Hybrid's deletion was undone by the push migration.
+---------------------------------------------------------------------------
+```
+
 ---
 
 ### Scenario 4: Same-Name Independent File Addition (Insertion Race Condition)
@@ -164,6 +200,18 @@ python3 tests/test_06_interleaved_commits_mapped_unmapped.py --auto
    - **Silent Overwrite Risk Check**: Check if hybrid's `"Hybrid version"` content was silently overwritten by origin's `"Origin version"`.
    - **Hybrid Content Preservation Check**: Check if hybrid's independent content was preserved or lost.
 
+```
+Risk Evaluation:
+---------------------------------------------------------------------------
+  [NOT DETECTED] Copybara Collision Error Raised
+         └─ Copybara completed without raising a path collision error (uncaught path collision leading to data loss).
+  [DETECTED / RISK ACTIVE] Silent Overwrite Risk
+         └─ Hybrid's independently created file was silently overwritten by Origin's version.
+  [DETECTED / RISK ACTIVE] Hybrid Independent Content Loss Risk
+         └─ Hybrid's independent content was lost during sync.
+---------------------------------------------------------------------------
+```
+
 ---
 
 ### Scenario 5: History Rewrite / Rebase Desynchronization
@@ -191,6 +239,16 @@ python3 tests/test_06_interleaved_commits_mapped_unmapped.py --auto
 4. **Step 4: Verification & Failure Mode Assertions**
    - **Explicit Error Raised Check**: Verify `push` fails with a non-zero exit code.
    - **Revision Lookup Desynchronization Check**: Verify Copybara error output matches revision lookup / `GitOrigin-RevId` failure.
+
+```
+Risk Evaluation:
+---------------------------------------------------------------------------
+  [NOT DETECTED] Copybara Revision Lookup Error Raised
+         └─ Copybara completed without raising a revision error (silently processed force-pushed history without halting).
+  [DETECTED / RISK ACTIVE] Silent Re-sync / Duplicate Commit Risk on Force Push
+         └─ Copybara silently processed the force-pushed commit instead of halting for history verification.
+---------------------------------------------------------------------------
+```
 
 ---
 
@@ -221,5 +279,25 @@ python3 tests/test_06_interleaved_commits_mapped_unmapped.py --auto
    - **Assertion 1**: `repo-1/a/file.a` in hybrid received all mapped updates from Commit 1 and Commit 3.
    - **Assertion 2**: Unmapped file `c/other.txt` did **NOT** leak into hybrid.
    - **Assertion 3**: Copybara filtered commits cleanly: Commit 1 migrated, Commit 2 skipped (no-op), Commit 3 stripped unmapped changes and migrated mapped diff.
+
+```
+Assertion Results Summary:
+---------------------------------------------------------------------------
+  [PASS] 1. repo-1/a/file.a in hybrid received all mapped updates (Commit 1 & Commit 3)
+         └─ Content:
+file a
+Commit 1: mapped file update
+Commit 3: mapped file update
+  [PASS] 2. Unmapped file c/other.txt did NOT leak into hybrid
+         └─ Unmapped path exists: False
+  [PASS] 3. Copybara filtered commits cleanly (Commit 1 migrated, Commit 2 skipped, Commit 3 stripped)
+         └─ Hybrid Commit Log:
+170a6d6 origin commit 3: modify both mapped a/file.a and unmapped c/other.txt
+d553d5d origin commit 1: update mapped file a/file.a
+ee2fe26 added a/file.a
+147ad38 added b/file.b
+d13598d added a/file.a
+---------------------------------------------------------------------------
+```
 
 ---
