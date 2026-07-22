@@ -15,6 +15,7 @@ Step-by-step execution with interactive breakpoints (`[BREAKPOINT]`), showing de
 python3 tests/test_01_unmapped_path_isolation.py
 python3 tests/test_02_structural_conflict_rename_vs_modify.py
 python3 tests/test_03_asymmetric_destructive_modify_vs_delete.py
+python3 tests/test_04_same_name_independent_file_addition.py
 ```
 
 ### Automated / Non-Interactive Mode
@@ -24,6 +25,7 @@ To run without interactive pause prompts (ideal for CI/CD or rapid validation):
 python3 tests/test_01_unmapped_path_isolation.py --auto
 python3 tests/test_02_structural_conflict_rename_vs_modify.py --auto
 python3 tests/test_03_asymmetric_destructive_modify_vs_delete.py --auto
+python3 tests/test_04_same_name_independent_file_addition.py --auto
 ```
 
 ### Flags & Options
@@ -62,22 +64,6 @@ python3 tests/test_03_asymmetric_destructive_modify_vs_delete.py --auto
    - **Assertion 2**: Unmapped path `repo-1/c` and `unmapped.txt` do **NOT** leak into origin `repo-1`.
    - **Assertion 3**: Copybara executes subsequent push/pull operations without errors, and `repo-1/c/unmapped.txt` remains intact inside `hybrid`.
 
-#### Results
-
-```
-Assertion Results Summary:
-------------------------------------------------------------
-  [PASS] 1. a/file.a in origin (repo-1) received update
-            └─ Content: 'file a updated inside hybrid repo'
-  [PASS] 2. repo-1/c and unmapped.txt did NOT appear
-            in origin (repo-1)
-            └─ Origin path exists: False
-  [PASS] 3. Copybara executed subsequent push/pull clean
-            & repo-1/c remains intact in hybrid
-            └─ Hybrid unmapped file exists: True
-------------------------------------------------------------
-```
-
 ---
 
 ### Scenario 2: Structural Conflict (File Rename vs. Concurrent Modification)
@@ -110,34 +96,6 @@ Assertion Results Summary:
    - **Silent Duplication Risk Check**: Check if both `file.a` AND `file_renamed.a` persist in either repository.
    - **Silent Deletion Risk Check**: Check if hybrid's modified content was overwritten or deleted without trace.
 
-#### Results
-
-```
-State Analysis & Conflict Inspection:
------------------------------------------------------------
-  • Sync Exit Code          : 0 (Success/Clean Exit)
-  • Origin Files Present   : file.a=False,
-                             file_renamed.a=True
-  • Hybrid Files Present   : file.a=False,
-                             file_renamed.a=True
-  • Origin file.a content  : 'N/A'
-  • Origin renamed content : 'file a'
-  • Hybrid file.a content  : 'N/A'
-  • Hybrid renamed content : 'file a'
------------------------------------------------------------
-
-Risk Evaluation:
------------------------------------------------------------
-  [NOT DETECTED] Copybara Error / Conflict Raised
-         └─ Copybara completed without raising
-            a sync error.
-  [NOT DETECTED] Silent Duplication Risk
-         └─ No duplicate file creation detected.
-  [DETECTED / RISK ACTIVE] Silent Deletion Risk
-         └─ Hybrid modified content was lost during sync.
------------------------------------------------------------
-```
-
 ---
 
 ### Scenario 3: Asymmetric Destructive Operation (Modify vs. Delete)
@@ -169,5 +127,37 @@ Risk Evaluation:
    - Check if Copybara raised an explicit error/conflict.
    - Check if `repo-1/a/file.a` was quietly recreated in hybrid with origin's modified content.
    - Check if hybrid's file deletion was preserved or overridden.
+
+---
+
+### Scenario 4: Same-Name Independent File Addition (Insertion Race Condition)
+- **Script**: [`tests/test_04_same_name_independent_file_addition.py`](file:///home/miv/workspace/staj2026/git-syncer/tests/test_04_same_name_independent_file_addition.py)
+- **Objective**: Test what happens when two developers independently create a file at the exact same relative path (`a/feature.py` in origin vs `repo-1/a/feature.py` in hybrid) before any sync occurs. Evaluate whether Copybara halts execution with a path collision error or silently overwrites hybrid's file.
+
+#### Test Workflow:
+1. **Step 1: Setup & Baseline Sync**
+   - Reset sample repos to clean initial state.
+   - Run `python3 hybrid-syncer.py push --init-history` to establish baseline history state.
+   - *Breakpoint 1*: User inspects clean baseline.
+
+2. **Step 2: Origin Action (Create `a/feature.py`)**
+   - Create `a/feature.py` with content `"Origin version"` in origin `repo-1` and push to `repo-1.git`.
+   - *Diagnostic Output*: Print origin commit log and file tree.
+   - *Breakpoint 2*: User inspects origin file creation.
+
+3. **Step 3: Hybrid Action (Independently Create `repo-1/a/feature.py`)**
+   - Independently create `repo-1/a/feature.py` with content `"Hybrid version"` in hybrid repo and commit.
+   - *Diagnostic Output*: Print hybrid commit log and file tree.
+   - *Breakpoint 3*: User inspects hybrid independent file creation.
+
+4. **Step 4: Execution (`hybrid-syncer.py push`)**
+   - Run `python3 hybrid-syncer.py push -t repo-1-a` to attempt syncing origin's `feature.py` into hybrid.
+   - *Diagnostic Output*: Print stdout, stderr, exit code, and updated file trees.
+   - *Breakpoint 4*: User inspects push execution outcome.
+
+5. **Step 5: Verification & Risk Analysis**
+   - **Collision Error Raised Check**: Check if Copybara halts with exit code error due to path collision.
+   - **Silent Overwrite Risk Check**: Check if hybrid's `"Hybrid version"` content was silently overwritten by origin's `"Origin version"`.
+   - **Hybrid Content Preservation Check**: Check if hybrid's independent content was preserved or lost.
 
 ---
