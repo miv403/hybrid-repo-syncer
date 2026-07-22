@@ -16,6 +16,8 @@ python3 tests/test_01_unmapped_path_isolation.py
 python3 tests/test_02_structural_conflict_rename_vs_modify.py
 python3 tests/test_03_asymmetric_destructive_modify_vs_delete.py
 python3 tests/test_04_same_name_independent_file_addition.py
+python3 tests/test_05_history_rewrite_rebase_desync.py
+python3 tests/test_06_interleaved_commits_mapped_unmapped.py
 ```
 
 ### Automated / Non-Interactive Mode
@@ -26,6 +28,8 @@ python3 tests/test_01_unmapped_path_isolation.py --auto
 python3 tests/test_02_structural_conflict_rename_vs_modify.py --auto
 python3 tests/test_03_asymmetric_destructive_modify_vs_delete.py --auto
 python3 tests/test_04_same_name_independent_file_addition.py --auto
+python3 tests/test_05_history_rewrite_rebase_desync.py --auto
+python3 tests/test_06_interleaved_commits_mapped_unmapped.py --auto
 ```
 
 ### Flags & Options
@@ -159,5 +163,63 @@ python3 tests/test_04_same_name_independent_file_addition.py --auto
    - **Collision Error Raised Check**: Check if Copybara halts with exit code error due to path collision.
    - **Silent Overwrite Risk Check**: Check if hybrid's `"Hybrid version"` content was silently overwritten by origin's `"Origin version"`.
    - **Hybrid Content Preservation Check**: Check if hybrid's independent content was preserved or lost.
+
+---
+
+### Scenario 5: History Rewrite / Rebase Desynchronization
+- **Script**: [`tests/test_05_history_rewrite_rebase_desync.py`](file:///home/miv/workspace/staj2026/git-syncer/tests/test_05_history_rewrite_rebase_desync.py)
+- **Objective**: Copybara relies heavily on commit metadata (`GitOrigin-RevId`) recorded in destination commit logs to calculate revision state. If an origin developer rewrites history (`git commit --amend` or rebase) and force-pushes, the origin SHA changes. Evaluate whether Copybara detects the missing SHA and throws an explicit revision error.
+
+#### Test Workflow:
+1. **Step 1: Setup & Baseline Sync**
+   - Reset sample repos to clean initial state.
+   - Perform initial push so hybrid records `GitOrigin-RevId` pointing to origin's latest commit SHA.
+   - *Diagnostic Output*: Print origin commit log and hybrid commit log showing `GitOrigin-RevId`.
+   - *Breakpoint 1*: User inspects baseline history recording.
+
+2. **Step 2: Origin Action (History Rewrite & Force Push)**
+   - Amend the latest commit in origin (`git commit --amend`) to rewrite its SHA.
+   - Force-push to origin (`git push --force origin master`).
+   - *Diagnostic Output*: Print origin's amended commit log.
+   - *Breakpoint 2*: User inspects amended commit and force push.
+
+3. **Step 3: Execution (`hybrid-syncer.py push`)**
+   - Run `python3 hybrid-syncer.py push -t repo-1-a` to attempt sync after history rewrite.
+   - *Diagnostic Output*: Print Copybara error output and exit code.
+   - *Breakpoint 3*: User inspects push failure.
+
+4. **Step 4: Verification & Failure Mode Assertions**
+   - **Explicit Error Raised Check**: Verify `push` fails with a non-zero exit code.
+   - **Revision Lookup Desynchronization Check**: Verify Copybara error output matches revision lookup / `GitOrigin-RevId` failure.
+
+---
+
+### Scenario 6: Interleaved Commits Across Mapped and Unmapped Paths
+- **Script**: [`tests/test_06_interleaved_commits_mapped_unmapped.py`](file:///home/miv/workspace/staj2026/git-syncer/tests/test_06_interleaved_commits_mapped_unmapped.py)
+- **Objective**: Test how Copybara handles a series of iterative commits in origin that affect both mapped subdirectories (`a/`) and unmapped subdirectories (`c/`). Evaluate whether Copybara migrates mapped commits, skips unmapped-only commits, and strips out unmapped changes from multi-file commits.
+
+#### Test Workflow:
+1. **Step 1: Setup & Baseline Sync**
+   - Reset sample repos to clean initial state.
+   - Run `python3 hybrid-syncer.py push --init-history` to establish clean baseline.
+   - *Breakpoint 1*: User inspects baseline.
+
+2. **Step 2: Origin Action (3 Interleaved Commits)**
+   - Commit 1: Modify mapped file `a/file.a`.
+   - Commit 2: Modify unmapped file `c/other.txt`.
+   - Commit 3: Modify both mapped `a/file.a` AND unmapped `c/other.txt` in a single commit.
+   - Push all 3 commits to `repo-1.git`.
+   - *Diagnostic Output*: Print origin commit log showing all 3 commits.
+   - *Breakpoint 2*: User inspects 3 origin commits.
+
+3. **Step 3: Execution (`hybrid-syncer.py push`)**
+   - Run `python3 hybrid-syncer.py push -t repo-1-a` in `ITERATIVE` mode.
+   - *Diagnostic Output*: Print stdout, stderr, and hybrid commit log.
+   - *Breakpoint 3*: User inspects iterative push migration.
+
+4. **Step 4: Verification & Assertions**
+   - **Assertion 1**: `repo-1/a/file.a` in hybrid received all mapped updates from Commit 1 and Commit 3.
+   - **Assertion 2**: Unmapped file `c/other.txt` did **NOT** leak into hybrid.
+   - **Assertion 3**: Copybara filtered commits cleanly: Commit 1 migrated, Commit 2 skipped (no-op), Commit 3 stripped unmapped changes and migrated mapped diff.
 
 ---
