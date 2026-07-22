@@ -6,135 +6,21 @@ Objective:
   Manifest defines strict mappings (origin.path, hybrid.path).
   Ensure changes occurring outside target folders in either repos are ignored,
   preventing dirty states, unwanted deletions, or cross-contamination during pull/push operations.
-
-Steps:
-  1. Setup: Reset sample repos and run `push --init-history` so both origin and hybrid are clean.
-  2. Hybrid Action:
-     - In hybrid, create an unmapped folder `repo-1/c/` with `unmapped.txt`.
-     - In hybrid, create a valid update inside mapped folder `repo-1/a/file.a`.
-     - Commit both changes in hybrid.
-  3. Execution: Run `hybrid-syncer.py pull -t repo-1-a`.
-  4. Verification:
-     - Check `repo-1` in origin: `a/file.a` receives update.
-     - `repo-1/c` and `unmapped.txt` must NOT appear in origin (`repo-1`).
-     - Copybara should not delete `repo-1/c` from hybrid during subsequent operations.
 """
 
-import argparse
-import os
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
-# ANSI Terminal Colors
-HEADER = "\033[95m\033[1m"
-OKBLUE = "\033[94m"
-OKCYAN = "\033[96m"
-OKGREEN = "\033[92m\033[1m"
-WARNING = "\033[93m"
-FAIL = "\033[91m\033[1m"
-ENDC = "\033[0m"
-BOLD = "\033[1m"
-
-
-def run_cmd(cmd, cwd=None, check=True, capture=True):
-    """Executes a shell command and returns output."""
-    res = subprocess.run(
-        cmd,
-        shell=True,
-        cwd=cwd,
-        text=True,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.PIPE if capture else None,
-    )
-    if check and res.returncode != 0:
-        err = res.stderr if capture else f"exit code {res.returncode}"
-        print(f"{FAIL}[ERROR] Command failed: {cmd}{ENDC}")
-        if capture and res.stderr:
-            print(f"{FAIL}{res.stderr.strip()}{ENDC}")
-        sys.exit(res.returncode)
-    return res
-
-
-def print_banner(title):
-    print(f"\n{HEADER}{'=' * 75}{ENDC}")
-    print(f"{HEADER}{title.center(75)}{ENDC}")
-    print(f"{HEADER}{'=' * 75}{ENDC}\n")
-
-
-def print_step_header(step_num, title, description=""):
-    print(f"{OKCYAN}{'━' * 75}{ENDC}")
-    print(f"{BOLD}{OKCYAN}STEP {step_num}: {title}{ENDC}")
-    if description:
-        print(f"{OKCYAN}{description}{ENDC}")
-    print(f"{OKCYAN}{'━' * 75}{ENDC}\n")
-
-
-def print_diagnostic(title, content):
-    print(f"{WARNING}🔍 [DIAGNOSTIC] {title}:{ENDC}")
-    if content:
-        print(f"{content.strip()}")
-    else:
-        print("  (empty)")
-    print()
-
-
-def print_file_tree(repo_path, title):
-    repo_path = Path(repo_path)
-    if not repo_path.exists():
-        print_diagnostic(f"File tree for {title}", "Path does not exist")
-        return
-    res = run_cmd("git ls-files", cwd=repo_path, check=False)
-    files = res.stdout.strip() if res.stdout else "No tracked files"
-    print_diagnostic(f"Tracked Files in {title} ({repo_path})", files)
-
-
-def print_git_log(repo_path, title, count=3):
-    repo_path = Path(repo_path)
-    if not repo_path.exists():
-        return
-    res = run_cmd(f"git log -n {count} --oneline --graph --stat", cwd=repo_path, check=False)
-    print_diagnostic(f"Recent Git Commits in {title}", res.stdout)
-
-
-def breakpoint_prompt(auto_mode, step_num, title):
-    if auto_mode:
-        print(f"{OKBLUE}⏩ [AUTO] Skipping breakpoint for Step {step_num}...{ENDC}\n")
-        return
-    print(f"{BOLD}{WARNING}⏸️  [BREAKPOINT {step_num}] {title}{ENDC}")
-    print("Inspect the output above. Press [ENTER] to execute the next step, or [Ctrl+C] to abort...")
-    try:
-        input()
-    except KeyboardInterrupt:
-        print(f"\n{FAIL}Test aborted by user.{ENDC}")
-        sys.exit(130)
-
-
-def reset_sample_repos(project_root):
-    print(f"{OKBLUE}🔄 Resetting sample repositories...{ENDC}")
-    sample_dir = project_root / "sample-repos"
-    
-    # Remove existing repo directories
-    for folder in ["repo-1", "repo-1.git", "repo-2", "repo-2.git", "hybrid"]:
-        p = sample_dir / folder
-        if p.exists():
-            if p.is_dir():
-                shutil.rmtree(p)
-            else:
-                p.unlink()
-
-    # Re-initialize repos using init scripts
-    run_cmd("./init-repo.sh 1", cwd=sample_dir)
-    run_cmd("./init-repo.sh 2", cwd=sample_dir)
-    run_cmd("./init-hybrid.sh 1", cwd=sample_dir)
-    print(f"{OKGREEN}✔ Sample repositories initialized cleanly.{ENDC}\n")
+from common import (
+    BOLD, FAIL, OKGREEN, ENDC,
+    run_cmd, print_banner, print_step_header, print_diagnostic,
+    print_file_tree, print_git_log, breakpoint_prompt, reset_sample_repos,
+    print_result_row, get_test_arg_parser
+)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Test Scenario 1: Unmapped Path Isolation")
-    parser.add_argument("--auto", "-y", action="store_true", help="Run automatically without interactive breakpoints")
-    parser.add_argument("--skip-reset", action="store_true", help="Skip resetting sample repositories")
+    parser = get_test_arg_parser("Test Scenario 1: Unmapped Path Isolation")
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parent.parent
@@ -223,17 +109,14 @@ def main():
         "Checking expected results: mapped file updated, unmapped file isolated, copybara clean state."
     )
 
-    # Assertion 1: repo-1/a/file.a in origin should receive the update
     origin_file_a = origin_dir / "a" / "file.a"
     file_a_content = origin_file_a.read_text() if origin_file_a.exists() else ""
     check_1_pass = "file a updated inside hybrid repo" in file_a_content
 
-    # Assertion 2: repo-1/c and unmapped.txt MUST NOT appear in origin repo-1
     origin_c_dir = origin_dir / "c"
     origin_unmapped_file = origin_dir / "c" / "unmapped.txt"
     check_2_pass = not origin_c_dir.exists() and not origin_unmapped_file.exists()
 
-    # Assertion 3: Copybara should not throw errors (0=success, 4=NO_OP) or delete repo-1/c from hybrid on subsequent push/pull
     subsequent_push = run_cmd(f"python3 {syncer_py} push -t repo-1-a", cwd=project_root, check=False)
     subsequent_pull = run_cmd(f"python3 {syncer_py} pull -t repo-1-a", cwd=project_root, check=False)
     hybrid_unmapped_exists = unmapped_file.exists()
@@ -243,29 +126,22 @@ def main():
         and hybrid_unmapped_exists
     )
 
-    # Print Assertion Results Table
     print(f"{BOLD}Assertion Results Summary:{ENDC}")
     print(f"{'-' * 75}")
 
-    def print_result(label, status, detail=""):
-        status_str = f"{OKGREEN}[PASS]{ENDC}" if status else f"{FAIL}[FAIL]{ENDC}"
-        print(f"  {status_str} {label}")
-        if detail:
-            print(f"         └─ {detail}")
-
-    print_result(
+    print_result_row(
         "1. a/file.a in origin (repo-1) received update",
         check_1_pass,
         f"Content: '{file_a_content.strip()}'"
     )
 
-    print_result(
+    print_result_row(
         "2. repo-1/c and unmapped.txt did NOT appear in origin (repo-1)",
         check_2_pass,
         f"Origin path exists: {origin_c_dir.exists()}"
     )
 
-    print_result(
+    print_result_row(
         "3. Copybara executed subsequent push/pull cleanly & repo-1/c remains intact in hybrid",
         check_3_pass,
         f"Hybrid unmapped file exists: {hybrid_unmapped_exists}"

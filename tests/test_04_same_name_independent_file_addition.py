@@ -1,134 +1,25 @@
 #!/usr/bin/env python3
 """
-Test Scenario 4: Same-Name Independent File Addition (Insertion Race Condition)
+Test Scenario 4: Same-Name Independent File Addition (Insertion Race)
 
 Objective:
-  Test what happens when two developers independently create a file at the exact same relative path
-  (origin `a/feature.py` vs hybrid `repo-1/a/feature.py`) before any sync occurs.
-  Evaluate whether Copybara halts execution with a path collision conflict error or silently overwrites hybrid's file.
-
-Steps:
-  1. Setup: Baseline clean state. Run `push --init-history` to establish baseline state.
-  2. Origin Action: Create `a/feature.py` with text "Origin version" in origin repo-1 and push to repo-1.git.
-  3. Hybrid Action: Create `repo-1/a/feature.py` with text "Hybrid version" in hybrid repo and commit.
-  4. Execution: Run `hybrid-syncer.py push -t repo-1-a`.
-  5. Verification & Risk Analysis:
-     - Check if Copybara raises a collision / revision conflict error.
-     - Inspect whether hybrid's "Hybrid version" file was overwritten by "Origin version".
+  Test conflict detection when a file with the exact same relative path is independently created
+  in both origin and hybrid repositories before syncing.
 """
 
-import argparse
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
-# ANSI Terminal Colors
-HEADER = "\033[95m\033[1m"
-OKBLUE = "\033[94m"
-OKCYAN = "\033[96m"
-OKGREEN = "\033[92m\033[1m"
-WARNING = "\033[93m\033[1m"
-FAIL = "\033[91m\033[1m"
-ENDC = "\033[0m"
-BOLD = "\033[1m"
-
-
-def run_cmd(cmd, cwd=None, check=True, capture=True):
-    """Executes a shell command and returns output."""
-    res = subprocess.run(
-        cmd,
-        shell=True,
-        cwd=cwd,
-        text=True,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.PIPE if capture else None,
-    )
-    if check and res.returncode != 0:
-        err = res.stderr if capture else f"exit code {res.returncode}"
-        print(f"{FAIL}[ERROR] Command failed: {cmd}{ENDC}")
-        if capture and res.stderr:
-            print(f"{FAIL}{res.stderr.strip()}{ENDC}")
-        sys.exit(res.returncode)
-    return res
-
-
-def print_banner(title):
-    print(f"\n{HEADER}{'=' * 75}{ENDC}")
-    print(f"{HEADER}{title.center(75)}{ENDC}")
-    print(f"{HEADER}{'=' * 75}{ENDC}\n")
-
-
-def print_step_header(step_num, title, description=""):
-    print(f"{OKCYAN}{'━' * 75}{ENDC}")
-    print(f"{BOLD}{OKCYAN}STEP {step_num}: {title}{ENDC}")
-    if description:
-        print(f"{OKCYAN}{description}{ENDC}")
-    print(f"{OKCYAN}{'━' * 75}{ENDC}\n")
-
-
-def print_diagnostic(title, content):
-    print(f"{WARNING}🔍 [DIAGNOSTIC] {title}:{ENDC}")
-    if content:
-        print(f"{content.strip()}")
-    else:
-        print("  (empty)")
-    print()
-
-
-def print_file_tree(repo_path, title):
-    repo_path = Path(repo_path)
-    if not repo_path.exists():
-        print_diagnostic(f"File tree for {title}", "Path does not exist")
-        return
-    res = run_cmd("git ls-files", cwd=repo_path, check=False)
-    files = res.stdout.strip() if res.stdout else "No tracked files"
-    print_diagnostic(f"Tracked Files in {title} ({repo_path})", files)
-
-
-def print_git_log(repo_path, title, count=3):
-    repo_path = Path(repo_path)
-    if not repo_path.exists():
-        return
-    res = run_cmd(f"git log -n {count} --oneline --graph --stat", cwd=repo_path, check=False)
-    print_diagnostic(f"Recent Git Commits in {title}", res.stdout)
-
-
-def breakpoint_prompt(auto_mode, step_num, title):
-    if auto_mode:
-        print(f"{OKBLUE}⏩ [AUTO] Skipping breakpoint for Step {step_num}...{ENDC}\n")
-        return
-    print(f"{BOLD}{WARNING}⏸️  [BREAKPOINT {step_num}] {title}{ENDC}")
-    print("Inspect the output above. Press [ENTER] to execute the next step, or [Ctrl+C] to abort...")
-    try:
-        input()
-    except KeyboardInterrupt:
-        print(f"\n{FAIL}Test aborted by user.{ENDC}")
-        sys.exit(130)
-
-
-def reset_sample_repos(project_root):
-    print(f"{OKBLUE}🔄 Resetting sample repositories...{ENDC}")
-    sample_dir = project_root / "sample-repos"
-
-    for folder in ["repo-1", "repo-1.git", "repo-2", "repo-2.git", "hybrid"]:
-        p = sample_dir / folder
-        if p.exists():
-            if p.is_dir():
-                shutil.rmtree(p)
-            else:
-                p.unlink()
-
-    run_cmd("./init-repo.sh 1", cwd=sample_dir)
-    run_cmd("./init-repo.sh 2", cwd=sample_dir)
-    run_cmd("./init-hybrid.sh 1", cwd=sample_dir)
-    print(f"{OKGREEN}✔ Sample repositories initialized cleanly.{ENDC}\n")
+from common import (
+    BOLD, FAIL, OKGREEN, ENDC,
+    run_cmd, print_banner, print_step_header, print_diagnostic,
+    print_file_tree, print_git_log, breakpoint_prompt, reset_sample_repos,
+    print_risk_row, get_test_arg_parser
+)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Test Scenario 4: Same-Name Independent File Addition")
-    parser.add_argument("--auto", "-y", action="store_true", help="Run automatically without interactive breakpoints")
-    parser.add_argument("--skip-reset", action="store_true", help="Skip resetting sample repositories")
+    parser = get_test_arg_parser("Test Scenario 4: Same-Name Independent File Addition (Insertion Race)")
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parent.parent
@@ -138,7 +29,7 @@ def main():
     print_banner("TEST SCENARIO 4: Same-Name Independent File Addition (Insertion Race)")
 
     # -------------------------------------------------------------------------
-    # STEP 1: SETUP & BASELINE
+    # STEP 1: SETUP & BASELINE SYNC
     # -------------------------------------------------------------------------
     print_step_header(
         1,
@@ -156,10 +47,10 @@ def main():
     print_file_tree(origin_dir, "Origin Repo (repo-1)")
     print_file_tree(hybrid_dir, "Hybrid Repo")
 
-    breakpoint_prompt(args.auto, 1, "Baseline state established. Ready to create independent files.")
+    breakpoint_prompt(args.auto, 1, "Baseline state established.")
 
     # -------------------------------------------------------------------------
-    # STEP 2: ORIGIN ACTION (CREATE feature.py)
+    # STEP 2: ORIGIN ACTION (CREATE a/feature.py)
     # -------------------------------------------------------------------------
     print_step_header(
         2,
@@ -167,8 +58,8 @@ def main():
         "In origin repo-1, create `a/feature.py` with content 'Origin version' and push to repo-1.git."
     )
 
-    origin_feature_file = origin_dir / "a" / "feature.py"
-    origin_feature_file.write_text("Origin version\n")
+    origin_feature = origin_dir / "a" / "feature.py"
+    origin_feature.write_text("Origin version of feature.py\n")
 
     run_cmd("git add a/feature.py", cwd=origin_dir)
     run_cmd('git commit -m "origin: add feature.py"', cwd=origin_dir)
@@ -177,7 +68,7 @@ def main():
     print_diagnostic("Origin Repo Commit Log", run_cmd("git log -n 1 --stat", cwd=origin_dir).stdout)
     print_file_tree(origin_dir, "Origin Repo (after adding feature.py)")
 
-    breakpoint_prompt(args.auto, 2, "Origin feature.py created & pushed. Ready for hybrid independent creation.")
+    breakpoint_prompt(args.auto, 2, "Origin feature.py created and pushed. Ready for hybrid action.")
 
     # -------------------------------------------------------------------------
     # STEP 3: HYBRID ACTION (INDEPENDENTLY CREATE repo-1/a/feature.py)
@@ -188,8 +79,8 @@ def main():
         "In hybrid repo, independently create `repo-1/a/feature.py` with content 'Hybrid version' and commit."
     )
 
-    hybrid_feature_file = hybrid_dir / "repo-1" / "a" / "feature.py"
-    hybrid_feature_file.write_text("Hybrid version\n")
+    hybrid_feature = hybrid_dir / "repo-1" / "a" / "feature.py"
+    hybrid_feature.write_text("Hybrid version of feature.py\n")
 
     run_cmd("git add repo-1/a/feature.py", cwd=hybrid_dir)
     run_cmd('git commit -m "hybrid: add repo-1/a/feature.py"', cwd=hybrid_dir)
@@ -218,7 +109,7 @@ def main():
     print_file_tree(origin_dir, "Origin Repo (after push attempt)")
     print_file_tree(hybrid_dir, "Hybrid Repo (after push attempt)")
 
-    breakpoint_prompt(args.auto, 4, "Push executed. Ready for verification and risk analysis.")
+    breakpoint_prompt(args.auto, 4, "Push executed. Ready for risk and collision analysis.")
 
     # -------------------------------------------------------------------------
     # STEP 5: VERIFICATION & RISK ANALYSIS
@@ -229,16 +120,15 @@ def main():
         "Evaluate whether Copybara raised a collision conflict error or silently overwrote hybrid's file."
     )
 
-    hybrid_feature_exists = hybrid_feature_file.exists()
-    hybrid_feature_content = hybrid_feature_file.read_text().strip() if hybrid_feature_exists else "N/A"
+    hybrid_feature_exists = hybrid_feature.exists()
+    hybrid_feature_content = hybrid_feature.read_text().strip() if hybrid_feature_exists else "N/A"
 
     push_failed = push_res.returncode != 0
-    silent_overwrite = hybrid_feature_content == "Origin version"
-    hybrid_content_lost = "Hybrid version" not in hybrid_feature_content
+    overwritten = hybrid_feature_content == "Origin version of feature.py"
 
     print(f"{BOLD}State Analysis & Collision Inspection:{ENDC}")
     print(f"{'-' * 75}")
-    print(f"  • Push Return Code         : {push_res.returncode} ({'Collision Error Raised' if push_failed else 'Success (0)'})")
+    print(f"  • Push Return Code         : {push_res.returncode} ({'Collision Error Raised' if push_failed else 'Clean Success'})")
     print(f"  • Hybrid feature.py Exists : {hybrid_feature_exists}")
     print(f"  • Hybrid feature.py Content: '{hybrid_feature_content}'")
     print(f"{'-' * 75}\n")
@@ -246,39 +136,32 @@ def main():
     print(f"{BOLD}Risk Evaluation:{ENDC}")
     print(f"{'-' * 75}")
 
-    def print_risk(label, status_str, description):
-        print(f"  {status_str} {label}")
-        print(f"         └─ {description}")
-
     if push_failed:
-        copybara_status = f"{FAIL}[DETECTED / ERROR RAISED]{ENDC}"
-        copybara_desc = f"Copybara halted with exit code {push_res.returncode} due to path collision."
-    elif silent_overwrite or hybrid_content_lost:
-        copybara_status = f"{WARNING}[NOT DETECTED]{ENDC}"
-        copybara_desc = "Copybara completed without raising a path collision error (uncaught path collision leading to data loss)."
+        err_status = f"{OKGREEN}[DETECTED / ERROR RAISED]{ENDC}"
+        err_desc = f"Copybara halted with exit code {push_res.returncode} due to path collision."
     else:
-        copybara_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
-        copybara_desc = "Copybara completed without raising a path collision error."
+        err_status = f"{FAIL}[NOT DETECTED]{ENDC}"
+        err_desc = "Copybara completed without raising a path collision error."
 
-    print_risk("Copybara Collision Error Raised", copybara_status, copybara_desc)
+    print_risk_row("Copybara Collision Error Raised", err_status, err_desc)
 
-    if silent_overwrite:
-        overwrite_status = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}"
-        overwrite_desc = "Hybrid's independently created file was silently overwritten by Origin's version."
+    if overwritten:
+        ow_status = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}"
+        ow_desc = "Hybrid's independent feature.py was silently overwritten by origin's version."
     else:
-        overwrite_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
-        overwrite_desc = "Hybrid's independent version was not silently overwritten."
+        ow_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
+        ow_desc = "Hybrid's independent version was not silently overwritten."
 
-    print_risk("Silent Overwrite Risk", overwrite_status, overwrite_desc)
+    print_risk_row("Silent Overwrite Risk", ow_status, ow_desc)
 
-    if hybrid_content_lost:
-        loss_status = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}"
-        loss_desc = "Hybrid's independent content was lost during sync."
-    else:
+    if not overwritten and hybrid_feature_content == "Hybrid version of feature.py":
         loss_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
         loss_desc = "Hybrid's independent content was preserved."
+    else:
+        loss_status = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}"
+        loss_desc = "Hybrid's independent content was lost or modified."
 
-    print_risk("Hybrid Independent Content Loss Risk", loss_status, loss_desc)
+    print_risk_row("Hybrid Independent Content Loss Risk", loss_status, loss_desc)
     print(f"{'-' * 75}\n")
 
     print(f"{OKGREEN}🎉 TEST SCENARIO 4 COMPLETED. Diagnostics & risk analysis reported above.{ENDC}\n")

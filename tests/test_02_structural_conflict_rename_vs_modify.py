@@ -6,130 +6,21 @@ Objective:
   Git tracks renames heuristically, but Copybara processes operations via transformed directory trees (core.move).
   If someone renames a file in origin while someone else modifies the original file in hybrid,
   evaluate whether Copybara raises a conflict/error or exhibits silent duplication / silent deletion risks.
-
-Steps:
-  1. Setup: Baseline clean state with file.a existing in both origin (a/file.a) and hybrid (repo-1/a/file.a).
-  2. Origin Action: Rename a/file.a to a/file_renamed.a in origin repo-1 and push to repo-1.git.
-  3. Hybrid Action: Modify the content of repo-1/a/file.a in hybrid without renaming it, and commit.
-  4. Execution: Run `hybrid-syncer.py sync -t repo-1-a`.
-  5. Verification & Risk Analysis:
-     - Check if Copybara raises an error/conflict.
-     - Inspect for silent duplication (both file.a and file_renamed.a exist).
-     - Inspect for silent deletion (hybrid modification lost without trace).
 """
 
-import argparse
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
-# ANSI Terminal Colors
-HEADER = "\033[95m\033[1m"
-OKBLUE = "\033[94m"
-OKCYAN = "\033[96m"
-OKGREEN = "\033[92m\033[1m"
-WARNING = "\033[93m\033[1m"
-FAIL = "\033[91m\033[1m"
-ENDC = "\033[0m"
-BOLD = "\033[1m"
-
-
-def run_cmd(cmd, cwd=None, check=True, capture=True):
-    """Executes a shell command and returns output."""
-    res = subprocess.run(
-        cmd,
-        shell=True,
-        cwd=cwd,
-        text=True,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.PIPE if capture else None,
-    )
-    if check and res.returncode != 0:
-        err = res.stderr if capture else f"exit code {res.returncode}"
-        print(f"{FAIL}[ERROR] Command failed: {cmd}{ENDC}")
-        if capture and res.stderr:
-            print(f"{FAIL}{res.stderr.strip()}{ENDC}")
-        sys.exit(res.returncode)
-    return res
-
-
-def print_banner(title):
-    print(f"\n{HEADER}{'=' * 75}{ENDC}")
-    print(f"{HEADER}{title.center(75)}{ENDC}")
-    print(f"{HEADER}{'=' * 75}{ENDC}\n")
-
-
-def print_step_header(step_num, title, description=""):
-    print(f"{OKCYAN}{'━' * 75}{ENDC}")
-    print(f"{BOLD}{OKCYAN}STEP {step_num}: {title}{ENDC}")
-    if description:
-        print(f"{OKCYAN}{description}{ENDC}")
-    print(f"{OKCYAN}{'━' * 75}{ENDC}\n")
-
-
-def print_diagnostic(title, content):
-    print(f"{WARNING}🔍 [DIAGNOSTIC] {title}:{ENDC}")
-    if content:
-        print(f"{content.strip()}")
-    else:
-        print("  (empty)")
-    print()
-
-
-def print_file_tree(repo_path, title):
-    repo_path = Path(repo_path)
-    if not repo_path.exists():
-        print_diagnostic(f"File tree for {title}", "Path does not exist")
-        return
-    res = run_cmd("git ls-files", cwd=repo_path, check=False)
-    files = res.stdout.strip() if res.stdout else "No tracked files"
-    print_diagnostic(f"Tracked Files in {title} ({repo_path})", files)
-
-
-def print_git_log(repo_path, title, count=3):
-    repo_path = Path(repo_path)
-    if not repo_path.exists():
-        return
-    res = run_cmd(f"git log -n {count} --oneline --graph --stat", cwd=repo_path, check=False)
-    print_diagnostic(f"Recent Git Commits in {title}", res.stdout)
-
-
-def breakpoint_prompt(auto_mode, step_num, title):
-    if auto_mode:
-        print(f"{OKBLUE}⏩ [AUTO] Skipping breakpoint for Step {step_num}...{ENDC}\n")
-        return
-    print(f"{BOLD}{WARNING}⏸️  [BREAKPOINT {step_num}] {title}{ENDC}")
-    print("Inspect the output above. Press [ENTER] to execute the next step, or [Ctrl+C] to abort...")
-    try:
-        input()
-    except KeyboardInterrupt:
-        print(f"\n{FAIL}Test aborted by user.{ENDC}")
-        sys.exit(130)
-
-
-def reset_sample_repos(project_root):
-    print(f"{OKBLUE}🔄 Resetting sample repositories...{ENDC}")
-    sample_dir = project_root / "sample-repos"
-
-    for folder in ["repo-1", "repo-1.git", "repo-2", "repo-2.git", "hybrid"]:
-        p = sample_dir / folder
-        if p.exists():
-            if p.is_dir():
-                shutil.rmtree(p)
-            else:
-                p.unlink()
-
-    run_cmd("./init-repo.sh 1", cwd=sample_dir)
-    run_cmd("./init-repo.sh 2", cwd=sample_dir)
-    run_cmd("./init-hybrid.sh 1", cwd=sample_dir)
-    print(f"{OKGREEN}✔ Sample repositories initialized cleanly.{ENDC}\n")
+from common import (
+    BOLD, FAIL, OKGREEN, WARNING, ENDC,
+    run_cmd, print_banner, print_step_header, print_diagnostic,
+    print_file_tree, print_git_log, breakpoint_prompt, reset_sample_repos,
+    print_risk_row, get_test_arg_parser
+)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Test Scenario 2: Structural Conflict (Rename vs Concurrent Modify)")
-    parser.add_argument("--auto", "-y", action="store_true", help="Run automatically without interactive breakpoints")
-    parser.add_argument("--skip-reset", action="store_true", help="Skip resetting sample repositories")
+    parser = get_test_arg_parser("Test Scenario 2: Structural Conflict (Rename vs Concurrent Modify)")
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parent.parent
@@ -213,7 +104,6 @@ def main():
 
     print_diagnostic(f"hybrid-syncer.py sync return code: {sync_res.returncode}", f"Stdout:\n{stdout_msg}\nStderr:\n{stderr_msg}")
 
-    # Fetch latest in origin to inspect state
     run_cmd("git pull origin master", cwd=origin_dir, check=False)
 
     print_file_tree(origin_dir, "Origin Repo (after sync attempt)")
@@ -230,21 +120,17 @@ def main():
         "Analyze failure modes: Copybara conflict errors, Silent Duplication, or Silent Deletion."
     )
 
-    # Inspect file existence in origin
     origin_old_exists = (origin_dir / "a" / "file.a").exists()
     origin_renamed_exists = (origin_dir / "a" / "file_renamed.a").exists()
 
-    # Inspect file existence in hybrid
     hybrid_old_exists = (hybrid_dir / "repo-1" / "a" / "file.a").exists()
     hybrid_renamed_exists = (hybrid_dir / "repo-1" / "a" / "file_renamed.a").exists()
 
-    # Read contents if existing
     origin_old_content = (origin_dir / "a" / "file.a").read_text().strip() if origin_old_exists else "N/A"
     origin_renamed_content = (origin_dir / "a" / "file_renamed.a").read_text().strip() if origin_renamed_exists else "N/A"
     hybrid_old_content = (hybrid_dir / "repo-1" / "a" / "file.a").read_text().strip() if hybrid_old_exists else "N/A"
     hybrid_renamed_content = (hybrid_dir / "repo-1" / "a" / "file_renamed.a").read_text().strip() if hybrid_renamed_exists else "N/A"
 
-    # Evaluate specific risks
     sync_failed = sync_res.returncode != 0
     silent_duplication = (origin_old_exists and origin_renamed_exists) or (hybrid_old_exists and hybrid_renamed_exists)
     hybrid_mod_deleted = (
@@ -268,12 +154,8 @@ def main():
     print(f"{BOLD}Risk Evaluation:{ENDC}")
     print(f"{'-' * 75}")
 
-    def print_risk(label, status_str, description):
-        print(f"  {status_str} {label}")
-        print(f"         └─ {description}")
-
     if sync_failed:
-        copybara_status = f"{FAIL}[DETECTED / ERROR RAISED]{ENDC}"
+        copybara_status = f"{OKGREEN}[DETECTED / ERROR RAISED]{ENDC}" if not (hybrid_mod_deleted or silent_duplication) else f"{FAIL}[DETECTED / ERROR RAISED]{ENDC}"
         copybara_desc = f"Copybara returned exit code {sync_res.returncode} due to structural divergence."
     elif hybrid_mod_deleted or silent_duplication:
         copybara_status = f"{WARNING}[NOT DETECTED]{ENDC}"
@@ -282,7 +164,7 @@ def main():
         copybara_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
         copybara_desc = "Copybara completed without raising a sync error."
 
-    print_risk("Copybara Error / Conflict Raised", copybara_status, copybara_desc)
+    print_risk_row("Copybara Error / Conflict Raised", copybara_status, copybara_desc)
 
     if silent_duplication:
         dup_status = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}"
@@ -291,7 +173,7 @@ def main():
         dup_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
         dup_desc = "No duplicate file creation detected."
 
-    print_risk("Silent Duplication Risk", dup_status, dup_desc)
+    print_risk_row("Silent Duplication Risk", dup_status, dup_desc)
 
     if hybrid_mod_deleted:
         del_status = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}"
@@ -300,7 +182,7 @@ def main():
         del_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
         del_desc = "Hybrid modified content preserved in at least one repo location."
 
-    print_risk("Silent Deletion Risk", del_status, del_desc)
+    print_risk_row("Silent Deletion Risk", del_status, del_desc)
     print(f"{'-' * 75}\n")
 
     print(f"{OKGREEN}🎉 TEST SCENARIO 2 COMPLETED. Diagnostics & risk analysis reported above.{ENDC}\n")
