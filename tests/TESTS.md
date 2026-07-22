@@ -62,6 +62,22 @@ python3 tests/test_03_asymmetric_destructive_modify_vs_delete.py --auto
    - **Assertion 2**: Unmapped path `repo-1/c` and `unmapped.txt` do **NOT** leak into origin `repo-1`.
    - **Assertion 3**: Copybara executes subsequent push/pull operations without errors, and `repo-1/c/unmapped.txt` remains intact inside `hybrid`.
 
+#### Results
+
+```
+Assertion Results Summary:
+------------------------------------------------------------
+  [PASS] 1. a/file.a in origin (repo-1) received update
+            └─ Content: 'file a updated inside hybrid repo'
+  [PASS] 2. repo-1/c and unmapped.txt did NOT appear
+            in origin (repo-1)
+            └─ Origin path exists: False
+  [PASS] 3. Copybara executed subsequent push/pull clean
+            & repo-1/c remains intact in hybrid
+            └─ Hybrid unmapped file exists: True
+------------------------------------------------------------
+```
+
 ---
 
 ### Scenario 2: Structural Conflict (File Rename vs. Concurrent Modification)
@@ -93,6 +109,34 @@ python3 tests/test_03_asymmetric_destructive_modify_vs_delete.py --auto
    - **Error / Conflict Raised Check**: Evaluate if Copybara detected structural divergence and raised an error.
    - **Silent Duplication Risk Check**: Check if both `file.a` AND `file_renamed.a` persist in either repository.
    - **Silent Deletion Risk Check**: Check if hybrid's modified content was overwritten or deleted without trace.
+
+#### Results
+
+```
+State Analysis & Conflict Inspection:
+-----------------------------------------------------------
+  • Sync Exit Code          : 0 (Success/Clean Exit)
+  • Origin Files Present   : file.a=False,
+                             file_renamed.a=True
+  • Hybrid Files Present   : file.a=False,
+                             file_renamed.a=True
+  • Origin file.a content  : 'N/A'
+  • Origin renamed content : 'file a'
+  • Hybrid file.a content  : 'N/A'
+  • Hybrid renamed content : 'file a'
+-----------------------------------------------------------
+
+Risk Evaluation:
+-----------------------------------------------------------
+  [NOT DETECTED] Copybara Error / Conflict Raised
+         └─ Copybara completed without raising
+            a sync error.
+  [NOT DETECTED] Silent Duplication Risk
+         └─ No duplicate file creation detected.
+  [DETECTED / RISK ACTIVE] Silent Deletion Risk
+         └─ Hybrid modified content was lost during sync.
+-----------------------------------------------------------
+```
 
 ---
 
