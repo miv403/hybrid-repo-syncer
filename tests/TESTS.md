@@ -38,6 +38,17 @@ python3 tests/test_06_interleaved_commits_mapped_unmapped.py --auto
 
 ---
 
+## Summary Overview Matrix
+
+| Scenario | Primary Risk Area | Expected Copybara / Tool Behavior |
+| --- | --- | --- |
+| **1. Unmapped Path Isolation** | Scope boundary leakage | Unmapped paths strictly ignored during `pull`<br> |
+| **2. Rename vs. Modify** | Directory transformation / `core.move`<br> | Sync error triggered; prevents silent duplication/deletion |
+| **3. Modify vs. Delete** | Asymmetric state divergence | Migration fails cleanly without orphaned states |
+| **4. Insertion Race** | Origin state tracking (`GitOrigin-RevId`) | Path collision error due to missing commit lineage |
+| **5. History Rewrite** | Broken SHA bookmarks | RevId lookup failure; alerts necessity for history re-init |
+| **6. Interleaved Commits** | `ITERATIVE` mode filtering | Filters non-matching origin path diffs dynamically |
+
 ## 📜 Test Scenarios Catalog
 
 ### Scenario 1: Unmapped Path Isolation (Boundary Leakage Test)
