@@ -28,7 +28,7 @@ HEADER = "\033[95m\033[1m"
 OKBLUE = "\033[94m"
 OKCYAN = "\033[96m"
 OKGREEN = "\033[92m\033[1m"
-WARNING = "\033[93m"
+WARNING = "\033[93m\033[1m"
 FAIL = "\033[91m\033[1m"
 ENDC = "\033[0m"
 BOLD = "\033[1m"
@@ -234,7 +234,7 @@ def main():
 
     push_failed = push_res.returncode != 0
     silent_overwrite = hybrid_feature_content == "Origin version"
-    hybrid_version_preserved = "Hybrid version" in hybrid_feature_content
+    hybrid_content_lost = "Hybrid version" not in hybrid_feature_content
 
     print(f"{BOLD}State Analysis & Collision Inspection:{ENDC}")
     print(f"{'-' * 75}")
@@ -246,28 +246,39 @@ def main():
     print(f"{BOLD}Risk Evaluation:{ENDC}")
     print(f"{'-' * 75}")
 
-    def print_risk(label, detected, description):
-        status_str = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}" if detected else f"{OKGREEN}[NOT DETECTED / SAFE]{ENDC}"
+    def print_risk(label, status_str, description):
         print(f"  {status_str} {label}")
         print(f"         └─ {description}")
 
-    print_risk(
-        "Copybara Collision Error Raised",
-        push_failed,
-        f"Copybara halted with exit code {push_res.returncode} due to path collision." if push_failed else "Copybara completed without raising a path collision error."
-    )
+    if push_failed:
+        copybara_status = f"{FAIL}[DETECTED / ERROR RAISED]{ENDC}"
+        copybara_desc = f"Copybara halted with exit code {push_res.returncode} due to path collision."
+    elif silent_overwrite or hybrid_content_lost:
+        copybara_status = f"{WARNING}[NOT DETECTED]{ENDC}"
+        copybara_desc = "Copybara completed without raising a path collision error (uncaught path collision leading to data loss)."
+    else:
+        copybara_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
+        copybara_desc = "Copybara completed without raising a path collision error."
 
-    print_risk(
-        "Silent Overwrite Risk",
-        silent_overwrite,
-        "Hybrid's independently created file was silently overwritten by Origin's version." if silent_overwrite else "Hybrid's independent version was not silently overwritten."
-    )
+    print_risk("Copybara Collision Error Raised", copybara_status, copybara_desc)
 
-    print_risk(
-        "Hybrid Independent Content Preserved",
-        hybrid_version_preserved,
-        "Hybrid's independent content was preserved." if hybrid_version_preserved else "Hybrid's independent content was lost."
-    )
+    if silent_overwrite:
+        overwrite_status = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}"
+        overwrite_desc = "Hybrid's independently created file was silently overwritten by Origin's version."
+    else:
+        overwrite_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
+        overwrite_desc = "Hybrid's independent version was not silently overwritten."
+
+    print_risk("Silent Overwrite Risk", overwrite_status, overwrite_desc)
+
+    if hybrid_content_lost:
+        loss_status = f"{FAIL}[DETECTED / RISK ACTIVE]{ENDC}"
+        loss_desc = "Hybrid's independent content was lost during sync."
+    else:
+        loss_status = f"{OKGREEN}[NOT DETECTED]{ENDC}"
+        loss_desc = "Hybrid's independent content was preserved."
+
+    print_risk("Hybrid Independent Content Loss Risk", loss_status, loss_desc)
     print(f"{'-' * 75}\n")
 
     print(f"{OKGREEN}🎉 TEST SCENARIO 4 COMPLETED. Diagnostics & risk analysis reported above.{ENDC}\n")
