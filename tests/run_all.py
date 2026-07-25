@@ -21,6 +21,7 @@ TEST_SCENARIOS = [
     ("test_05_history_rewrite_rebase_desync.py", "Test Scenario 5: History Rewrite / Rebase Desync"),
     ("test_06_interleaved_commits_mapped_unmapped.py", "Test Scenario 6: Interleaved Commits"),
     ("test_07_status_command.py", "Test Scenario 7: Status Command Verification"),
+    ("test_08_doctor_command.py", "Test Scenario 8: Doctor Command Verification"),
 ]
 
 

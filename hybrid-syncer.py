@@ -736,6 +736,89 @@ def handle_status(args):
     print()
 
 
+def check_manifest_health(manifest: dict, config_path: Path = Path("sync-manifest.yaml")) -> tuple[int, int]:
+    targets = manifest.get("targets", {})
+    base_dir = config_path.parent.resolve()
+    default_hybrid_url = manifest.get("hybrid_repo", "./hybrid")
+
+    errors = []
+    warnings = []
+
+    print(f"\n🩺 Running Hybrid Syncer Health Check on '{config_path}'...\n")
+
+    # 1. Missing Local Repositories Check
+    checked_repos = set()
+    for t_name, t_cfg in targets.items():
+        origin_cfg = t_cfg.get("origin", {})
+        hybrid_cfg = t_cfg.get("hybrid", {})
+
+        origin_url = resolve_repo_url(origin_cfg.get("url", ""), base_dir)
+        hybrid_url = resolve_repo_url(hybrid_cfg.get("url", default_hybrid_url), base_dir)
+
+        if origin_url and origin_url not in checked_repos:
+            checked_repos.add(origin_url)
+            if not Path(origin_url).exists():
+                errors.append(f"Target '{t_name}': Origin repository URL '{origin_url}' does not exist on disk.")
+
+        if hybrid_url and hybrid_url not in checked_repos:
+            checked_repos.add(hybrid_url)
+            if not Path(hybrid_url).exists():
+                errors.append(f"Target '{t_name}': Hybrid repository URL '{hybrid_url}' does not exist on disk.")
+
+    # 2. Hybrid Path Clashes & Prefix Overlaps
+    hybrid_paths = {}
+    for t_name, t_cfg in targets.items():
+        h_path = clean_path(t_cfg.get("hybrid", {}).get("path", ""))
+        for existing_target, existing_path in hybrid_paths.items():
+            if h_path == existing_path:
+                errors.append(f"Target '{t_name}' clashes with '{existing_target}' at hybrid path '{h_path or '.'}'")
+            elif h_path and existing_path:
+                if h_path.startswith(existing_path + "/") or existing_path.startswith(h_path + "/"):
+                    warnings.append(f"Target '{t_name}' ({h_path}) overlaps with '{existing_target}' ({existing_path})")
+            elif not h_path or not existing_path:
+                warnings.append(f"Target '{t_name}' ({h_path or '.'}) overlaps with root path of '{existing_target}' ({existing_path or '.'})")
+        hybrid_paths[t_name] = h_path
+
+    # 3. Origin Path Clashes & Prefix Overlaps (Within the Same Origin Repo)
+    origin_paths = {}  # repo_url -> dict(target_name -> o_path)
+    for t_name, t_cfg in targets.items():
+        o_url = resolve_repo_url(t_cfg.get("origin", {}).get("url", ""), base_dir)
+        o_path = clean_path(t_cfg.get("origin", {}).get("path", ""))
+        if not o_url:
+            continue
+        if o_url not in origin_paths:
+            origin_paths[o_url] = {}
+        for existing_target, existing_path in origin_paths[o_url].items():
+            if o_path == existing_path:
+                errors.append(f"Target '{t_name}' clashes with '{existing_target}' at origin path '{o_path or '.'}' in '{o_url}'")
+            elif o_path and existing_path:
+                if o_path.startswith(existing_path + "/") or existing_path.startswith(o_path + "/"):
+                    warnings.append(f"Target '{t_name}' origin path ({o_path}) overlaps with '{existing_target}' ({existing_path}) in '{o_url}'")
+        origin_paths[o_url][t_name] = o_path
+
+    # Output findings
+    if errors:
+        for err in errors:
+            print(f"❌ Error: {err}")
+    if warnings:
+        for warn in warnings:
+            print(f"⚠️ Warning: {warn}")
+
+    if not errors and not warnings:
+        print(f"✔ All {len(targets)} manifest target(s) passed health checks cleanly with 0 errors and 0 warnings.")
+    else:
+        print(f"\nManifest Health Summary: {len(errors)} error(s), {len(warnings)} warning(s) detected across {len(targets)} target(s).")
+
+    return len(errors), len(warnings)
+
+
+def handle_doctor(args):
+    manifest = load_manifest(args.config)
+    num_errors, _ = check_manifest_health(manifest, config_path=args.config)
+    if num_errors > 0:
+        sys.exit(1)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hybrid-syncer",
@@ -828,6 +911,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Filter status check to a specific target"
     )
     status_parser.set_defaults(func=handle_status)
+
+    # Subcommand: doctor / detector
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        aliases=["detector"],
+        help="Run manifest health check to detect path clashes, overlaps, and missing repositories"
+    )
+    doctor_parser.set_defaults(func=handle_doctor)
 
     # Subcommand: generate
     gen_parser = subparsers.add_parser(
