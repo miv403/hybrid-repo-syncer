@@ -619,6 +619,123 @@ def run_workflows(workflows, sky_path: Path, args):
             sys.exit(result.returncode)
 
 
+def format_path_display(path_str: str) -> str:
+    if not path_str or path_str == ".":
+        return "."
+    if not path_str.endswith("/") and "/" not in path_str:
+        return path_str + "/"
+    return path_str
+
+
+def handle_status(args):
+    manifest = load_manifest(args.config)
+    targets = manifest.get("targets", {})
+    base_dir = Path(args.config).parent.resolve()
+    default_hybrid_url = manifest.get("hybrid_repo", "./hybrid")
+
+    if getattr(args, "target", None):
+        if args.target not in targets:
+            available = ", ".join(targets.keys()) or "none"
+            print(f"Error: Target '{args.target}' not found in manifest. Available targets: {available}", file=sys.stderr)
+            sys.exit(1)
+        targets_to_check = {args.target: targets[args.target]}
+    else:
+        targets_to_check = targets
+
+    headers = ["Target", "Origin Path", "Hybrid Path", "Origin Status", "Hybrid Status", "Sync Status"]
+    rows = []
+
+    for t_name, t_cfg in targets_to_check.items():
+        origin_cfg = t_cfg.get("origin", {})
+        hybrid_cfg = t_cfg.get("hybrid", {})
+
+        origin_url = resolve_repo_url(origin_cfg.get("url", ""), base_dir)
+        origin_path = clean_path(origin_cfg.get("path", ""))
+        hybrid_url = resolve_repo_url(hybrid_cfg.get("url", default_hybrid_url), base_dir)
+        hybrid_path = clean_path(hybrid_cfg.get("path", ""))
+
+        origin_path_display = format_path_display(origin_path)
+        hybrid_path_display = format_path_display(hybrid_path)
+
+        # Check repository existence
+        origin_exists = Path(origin_url).exists() if origin_url else False
+        hybrid_exists = Path(hybrid_url).exists() if hybrid_url else False
+
+        if not origin_exists or not hybrid_exists:
+            origin_status = "Missing Repo" if not origin_exists else "Clean"
+            hybrid_status = "Missing Repo" if not hybrid_exists else "Clean"
+            sync_status = "Repository Not Found"
+            rows.append((t_name, origin_path_display, hybrid_path_display, origin_status, hybrid_status, sync_status))
+            continue
+
+        # Check uncommitted local changes
+        origin_uncommitted = check_clean_workspace(origin_url)
+        hybrid_uncommitted = check_clean_workspace(hybrid_url)
+
+        source_last_sync_sha, dest_commit_sha = find_effective_sync_point(origin_url, origin_path, hybrid_url, hybrid_path)
+
+        if not source_last_sync_sha or not dest_commit_sha:
+            origin_status = f"Dirty ({len(origin_uncommitted)})" if origin_uncommitted else "Untracked"
+            hybrid_status = f"Dirty ({len(hybrid_uncommitted)})" if hybrid_uncommitted else "Untracked"
+            sync_status = "Untracked / No Sync History"
+        else:
+            ancestry_ok = check_ancestry_history(origin_url, source_last_sync_sha) and check_ancestry_history(hybrid_url, dest_commit_sha)
+
+            origin_ahead = get_new_commits_count(origin_url, source_last_sync_sha, origin_path)
+            hybrid_ahead = get_new_commits_count(hybrid_url, dest_commit_sha, hybrid_path)
+
+            diverged = origin_ahead > 0 and hybrid_ahead > 0
+
+            # Origin Status string
+            orig_parts = []
+            if origin_ahead > 0:
+                orig_parts.append(f"Ahead ({origin_ahead})")
+            if origin_uncommitted:
+                orig_parts.append(f"Dirty ({len(origin_uncommitted)})" if not origin_ahead else "[Dirty]")
+            origin_status = " ".join(orig_parts) if orig_parts else "Clean"
+
+            # Hybrid Status string
+            hyb_parts = []
+            if hybrid_ahead > 0:
+                hyb_parts.append(f"Ahead ({hybrid_ahead})")
+            if hybrid_uncommitted:
+                hyb_parts.append(f"Dirty ({len(hybrid_uncommitted)})" if not hybrid_ahead else "[Dirty]")
+            hybrid_status = " ".join(hyb_parts) if hyb_parts else "Clean"
+
+            # Sync Status
+            if not ancestry_ok:
+                sync_status = "⚠️ History Rewritten"
+            elif diverged:
+                sync_status = "⚠️ DIVERGED (Conflict)"
+            elif origin_ahead > 0:
+                sync_status = "Ready to Push"
+            elif hybrid_ahead > 0:
+                sync_status = "Ready to Pull"
+            else:
+                sync_status = "In Sync"
+
+        rows.append((t_name, origin_path_display, hybrid_path_display, origin_status, hybrid_status, sync_status))
+
+    # Calculate column widths
+    min_widths = [15, 15, 15, 15, 15, 20]
+    col_widths = [max(min_w, len(h)) for min_w, h in zip(min_widths, headers)]
+
+    for row in rows:
+        for i, val in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(val))
+
+    # Format table
+    header_line = "  ".join(f"{headers[i]:<{col_widths[i]}}" for i in range(len(headers)))
+    sep_line = "-" * len(header_line)
+
+    print(f"\n{header_line}")
+    print(sep_line)
+    for row in rows:
+        row_line = "  ".join(f"{row[i]:<{col_widths[i]}}" for i in range(len(headers)))
+        print(row_line)
+    print()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hybrid-syncer",
@@ -699,6 +816,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Order of sync operations"
     )
     sync_parser.set_defaults(func=handle_execution)
+
+    # Subcommand: status
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Show synchronization state and workspace status for all targets"
+    )
+    status_parser.add_argument(
+        "-t", "--target",
+        type=str,
+        help="Filter status check to a specific target"
+    )
+    status_parser.set_defaults(func=handle_status)
 
     # Subcommand: generate
     gen_parser = subparsers.add_parser(
