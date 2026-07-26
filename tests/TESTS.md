@@ -25,6 +25,10 @@ python3 tests/test_03_asymmetric_destructive_modify_vs_delete.py
 python3 tests/test_04_same_name_independent_file_addition.py
 python3 tests/test_05_history_rewrite_rebase_desync.py
 python3 tests/test_06_interleaved_commits_mapped_unmapped.py
+python3 tests/test_07_status_command.py
+python3 tests/test_08_doctor_command.py
+python3 tests/test_09_unmapped_status_check.py
+python3 tests/test_10_exclusion_patterns.py
 ```
 
 ### Automated / Non-Interactive Mode
@@ -37,6 +41,10 @@ python3 tests/test_03_asymmetric_destructive_modify_vs_delete.py --auto
 python3 tests/test_04_same_name_independent_file_addition.py --auto
 python3 tests/test_05_history_rewrite_rebase_desync.py --auto
 python3 tests/test_06_interleaved_commits_mapped_unmapped.py --auto
+python3 tests/test_07_status_command.py --auto
+python3 tests/test_08_doctor_command.py --auto
+python3 tests/test_09_unmapped_status_check.py --auto
+python3 tests/test_10_exclusion_patterns.py --auto
 ```
 
 ### Flags & Options
@@ -51,7 +59,7 @@ The test suite uses a centralized architecture for DRY maintainability:
 
 - **`tests/common.py`**: Shared helper module providing Git execution (`run_cmd`), sample repository resets (`reset_sample_repos`), diagnostic reporting (`print_file_tree`, `print_git_log`, `print_diagnostic`), interactive breakpoints (`breakpoint_prompt`), and CLI argument parsing.
 - **`tests/run_all.py`**: Master test runner executing all scenario scripts sequentially and reporting unified pass/fail results.
-- **Scenario Scripts (`test_01` through `test_06`)**: Individual scenario scripts focusing strictly on defining Git actions and verifying outcomes.
+- **Scenario Scripts (`test_01` through `test_10`)**: Individual scenario scripts focusing strictly on defining Git actions and verifying outcomes.
 
 ---
 
@@ -65,6 +73,10 @@ The test suite uses a centralized architecture for DRY maintainability:
 | **4. Insertion Race** | Origin state tracking (`GitOrigin-RevId`) | Path collision error due to missing commit lineage |
 | **5. History Rewrite** | Broken SHA bookmarks | RevId lookup failure; alerts necessity for history re-init |
 | **6. Interleaved Commits** | `ITERATIVE` mode filtering | Filters non-matching origin path diffs dynamically |
+| **7. Status Command** | Sync & workspace state reporting | Reports commit counts ahead/behind, local uncommitted changes, divergence, and target filtering |
+| **8. Doctor Command** | Manifest configuration health | Detects exact path clashes, nested prefix overlaps, and missing local repositories on disk |
+| **9. Unmapped Status Check** | Unmapped root & orphan files | Identifies tracked and uncommitted orphan files living outside target paths |
+| **10. Exclusion Patterns** | File glob pattern exclusions | Converts `exclude` rules into Starlark `glob(..., exclude = [...])` to filter `.tmp`, `.github` files |
 
 ## 📜 Test Scenarios Catalog
 
@@ -329,3 +341,112 @@ d13598d added a/file.a
 ```
 
 ---
+
+### Scenario 7: Status Command Verification
+- **Script**: [`tests/test_07_status_command.py`](file:///home/miv/workspace/staj2026/git-syncer/tests/test_07_status_command.py)
+- **Objective**: Verify that `hybrid-syncer.py status` accurately reports repository status, commit ahead counts, local uncommitted workspace changes (`Dirty`), divergence warnings, and single-target filtering.
+
+#### Test Workflow:
+1. **Step 1: Baseline Sync & Initial Table Status**
+   - Reset sample repos and run `push --init-history` to establish clean baseline state.
+   - Run `python3 hybrid-syncer.py status` and verify all targets display `In Sync` and `Clean`.
+2. **Step 2: Origin & Hybrid Modifications**
+   - Commit changes in origin `repo-1` (`a/file.a`), hybrid (`repo-1/b/file.b`), and hybrid (`repo-1/a/file.a`) to create a diverged conflict state.
+   - Create uncommitted dirty file in origin `repo-2`.
+   - Run `status` and verify table reports `Ahead (1)`, `Dirty (1)`, `Ready to Pull`, and `⚠️ DIVERGED (Conflict)`.
+3. **Step 3: Target Filtering Verification**
+   - Run `status -t repo-1-a` and verify output is isolated strictly to `repo-1-a`.
+
+```
+Assertion Results Summary:
+---------------------------------------------------------------------------
+  [PASS] 1. Baseline status shows 'In Sync' for targets
+  [PASS] 2. Target repo-1-a correctly flagged as DIVERGED
+  [PASS] 3. Target repo-1-b shows Hybrid Ahead and 'Ready to Pull'
+  [PASS] 4. Target repo-2-a detects uncommitted local changes
+  [PASS] 5. Target filter `-t repo-1-a` isolates requested target
+---------------------------------------------------------------------------
+```
+
+---
+
+### Scenario 8: Doctor (Detector) Command Verification
+- **Script**: [`tests/test_08_doctor_command.py`](file:///home/miv/workspace/staj2026/git-syncer/tests/test_08_doctor_command.py)
+- **Objective**: Validate that `hybrid-syncer.py doctor` (and alias `detector`) detects manifest configuration errors, exact path clashes, nested prefix overlaps, and missing local repositories on disk.
+
+#### Test Workflow:
+1. **Step 1: Clean Manifest Check**
+   - Run `hybrid-syncer.py doctor` on valid `sync-manifest.yaml`.
+   - Verify output reports 0 errors, 0 warnings, and exit code 0.
+2. **Step 2: Exact Path Clash Check**
+   - Run `doctor` on manifest with two targets mapping to duplicate hybrid paths (`shared/path`).
+   - Verify explicit `❌ Error` raised and exit code 1 returned.
+3. **Step 3: Prefix Overlap Check**
+   - Run `doctor` on manifest with nested paths (`repo-1/a` and `repo-1/a/sub`).
+   - Verify `⚠️ Warning` diagnostic reported.
+4. **Step 4: Missing Repository Check**
+   - Run `detector` alias on manifest referencing non-existent origin repository URL.
+   - Verify explicit `❌ Error` reported for missing path.
+
+```
+Assertion Results Summary:
+---------------------------------------------------------------------------
+  [PASS] 1. Doctor passes clean manifest with 0 errors and exit code 0
+  [PASS] 2. Doctor detects exact path clash and returns exit code 1
+  [PASS] 3. Doctor detects prefix overlap and reports warning
+  [PASS] 4. Detector alias catches missing local repository path
+---------------------------------------------------------------------------
+```
+
+---
+
+### Scenario 9: Unmapped Path & Orphan Analyzer
+- **Script**: [`tests/test_09_unmapped_status_check.py`](file:///home/miv/workspace/staj2026/git-syncer/tests/test_09_unmapped_status_check.py)
+- **Objective**: Validate that `hybrid-syncer.py status --check-unmapped` identifies tracked orphan files and uncommitted local files living outside defined target paths while ignoring mapped files.
+
+#### Test Workflow:
+1. **Step 1: Baseline Unmapped Analysis**
+   - Run `status --check-unmapped` on sample repos where `repo-2` contains tracked file `b/file.b` outside target `repo-2-a` (`a/`).
+   - Verify `b/file.b` is detected as a Tracked Orphan File.
+2. **Step 2: Uncommitted Orphan File Check**
+   - Create root-level file `root_script.sh` and update mapped file `a/file.a` in `repo-1`.
+   - Run `status --check-unmapped`.
+   - Verify `root_script.sh` is detected as an Uncommitted Orphan File while `a/file.a` is correctly excluded.
+
+```
+Assertion Results Summary:
+---------------------------------------------------------------------------
+  [PASS] 1. Tracked orphan file (b/file.b) detected in repo-2
+  [PASS] 2. Uncommitted orphan file (root_script.sh) detected in repo-1
+  [PASS] 3. Mapped target file (a/file.a) correctly excluded from orphan report
+---------------------------------------------------------------------------
+```
+
+---
+
+### Scenario 10: Target Exclusion Patterns Verification
+- **Script**: [`tests/test_10_exclusion_patterns.py`](file:///home/miv/workspace/staj2026/git-syncer/tests/test_10_exclusion_patterns.py)
+- **Objective**: Validate that `hybrid-syncer.py` converts `exclude` rules (`**/*.tmp`, `.github/**`) into Starlark `glob(..., exclude = [...])` expressions and prevents matching excluded files from syncing.
+
+#### Test Workflow:
+1. **Step 1: Starlark Spec Generation Verification**
+   - Run `generate` on manifest containing `exclude` rules.
+   - Verify generated Starlark `origin_files` expression includes `glob(["a/**"], exclude = ["a/*.tmp", "a/**/*.tmp", "a/.github/**"])`.
+2. **Step 2: Create Excluded & Valid Files**
+   - Create `a/valid_file.a`, `a/cache.tmp`, and `a/.github/ci.yml` in origin `repo-1`.
+3. **Step 3: Execute Push Migration**
+   - Run `push` with exclusion manifest.
+4. **Step 4: Verification & Assertions**
+   - Verify `repo-1/a/valid_file.a` successfully synced to hybrid.
+   - Verify `cache.tmp` and `.github/ci.yml` were excluded and do NOT exist in hybrid.
+
+```
+Assertion Results Summary:
+---------------------------------------------------------------------------
+  [PASS] 1. Starlark spec contains formatted exclusion glob expression
+  [PASS] 2. Valid file `repo-1/a/valid_file.a` successfully synced to hybrid
+  [PASS] 3. Excluded pattern `**/*.tmp` prevented `cache.tmp` from syncing
+  [PASS] 4. Excluded pattern `.github/**` prevented `.github/ci.yml` from syncing
+---------------------------------------------------------------------------
+```
+

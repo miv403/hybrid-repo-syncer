@@ -1,6 +1,6 @@
 # hybrid-syncer
 
-`hybrid-syncer` is a lightweight Python CLI wrapper around [Copybara](https://github.com/google/copybara). It simplifies multi-repository code synchronization by reading a declarative YAML manifest (`sync-manifest.yaml`), automatically generating Copybara Starlark (`copy.bara.sky`) configuration files, and executing `push`, `pull`, or `sync` operations.
+`hybrid-syncer` is a lightweight Python CLI wrapper around [Copybara](https://github.com/google/copybara). It simplifies multi-repository code synchronization by reading a declarative YAML manifest (`sync-manifest.yaml`), automatically generating Copybara Starlark (`copy.bara.sky`) configuration files, executing `push`, `pull`, `sync`, `status`, and `doctor` operations.
 
 ---
 
@@ -9,6 +9,9 @@
 - **YAML-driven Configuration**: Manage repository mapping targets in a clean `sync-manifest.yaml`.
 - **Automatic Starlark Generation**: Dynamically renders `copy.bara.sky` files with `core.workflow()`, `core.move()` transformations, and path `glob()` matching.
 - **Bi-Directional Synchronization**: Supports origin → hybrid (`push`), hybrid → origin (`pull`), and sequential bi-directional (`sync`).
+- **Detailed Repository Status (`status`)**: Multi-column tabular status reporting commit ahead/behind counts, uncommitted local changes (`Dirty`), divergence warnings (`⚠️ DIVERGED`), and unmapped path analysis (`--check-unmapped`).
+- **Manifest Doctor & Detector (`doctor` / `detector`)**: Manifest health detector scanning for exact target path clashes, nested prefix overlaps, and missing repository paths on disk.
+- **Target Path Exclusion (`exclude`)**: Exclude specific file globs (e.g. `**/*.tmp`, `.github/**`) per origin, hybrid, or target mapping.
 - **Flexible Controls**: Target-specific filtering (`-t`), dry-run simulations (`-n`), initial history imports (`--init-history`), and custom working directory overrides (`-w`).
 
 ---
@@ -50,6 +53,9 @@ targets:
     origin:
       url: "./sample-repos/repo-1.git"
       path: "a"
+      exclude:
+        - "**/*.tmp"
+        - ".github/**"
     hybrid:
       path: "repo-1/a"
 
@@ -77,9 +83,12 @@ targets:
   - `origin.url` *(string, required)*: Remote URL or path to the origin repository.
   - `origin.path` *(string, optional)*: Subdirectory in origin repository (defaults to root if empty).
   - `origin.branch` *(string, optional)*: Branch override for origin.
+  - `origin.exclude` *(list of strings, optional)*: Glob patterns to exclude from origin repository sync.
   - `hybrid.path` *(string, optional)*: Target directory in the hybrid repository.
   - `hybrid.url` *(string, optional)*: URL override for hybrid repository.
   - `hybrid.branch` *(string, optional)*: Branch override for hybrid.
+  - `hybrid.exclude` *(list of strings, optional)*: Glob patterns to exclude from hybrid repository sync.
+  - `exclude` *(list of strings, optional)*: Target-level glob patterns to exclude from both origin and hybrid sync.
   - `mode` *(string, optional)*: Copybara workflow mode (`ITERATIVE`, `SQUASH`, default: `ITERATIVE`).
 
 ---
@@ -121,29 +130,50 @@ Generates and prints or exports the Copybara Starlark (`copy.bara.sky`) configur
 Executes origin → hybrid workflows (`<target>-push`).
 
 ```bash
-./hybrid-syncer.py push [-t/--target NAME] [-n/--dry-run] [--init-history]
+./hybrid-syncer.py push [-t/--target NAME] [-n/--dry-run] [--init-history] [--skip-guards]
 ```
 - `-t, --target NAME`: Run sync only for a specific target mapping.
 - `-n, --dry-run`: Pass `--dry-run` to Copybara without modifying destination remotes.
 - `--init-history`: Pass `--init-history` to Copybara (required during the first migration run for any workflow).
+- `--skip-guards`: Skip pre-flight safety circuit breaker guard checks.
 
 #### 4. `pull`
 Executes hybrid → origin workflows (`<target>-pull`).
 
 ```bash
-./hybrid-syncer.py pull [-t/--target NAME] [-n/--dry-run] [--init-history]
+./hybrid-syncer.py pull [-t/--target NAME] [-n/--dry-run] [--init-history] [--skip-guards]
 ```
 - `-t, --target NAME`: Run pull only for a specific target mapping.
 - `-n, --dry-run`: Pass `--dry-run` to Copybara.
 - `--init-history`: Pass `--init-history` to Copybara for first-time pull migration setups.
+- `--skip-guards`: Skip pre-flight safety circuit breaker guard checks.
 
 #### 5. `sync`
 Performs sequential bi-directional sync (push and pull).
 
 ```bash
-./hybrid-syncer.py sync [-t/--target NAME] [-n/--dry-run] [--init-history] [--strategy {push-first|pull-first}]
+./hybrid-syncer.py sync [-t/--target NAME] [-n/--dry-run] [--init-history] [--strategy {push-first|pull-first}] [--skip-guards]
 ```
 - `--strategy {push-first|pull-first}`: Execution order of sync operations (default: `push-first`).
+- `--skip-guards`: Skip pre-flight safety circuit breaker guard checks.
+
+#### 6. `status`
+Displays synchronization status, commit ahead counts, local uncommitted workspace changes, divergence warnings, and unmapped path reports.
+
+```bash
+./hybrid-syncer.py status [-t/--target NAME] [--check-unmapped]
+```
+- `-t, --target NAME`: Filter status report to a specific target.
+- `--check-unmapped`: Analyze origin repositories for tracked or uncommitted orphan files living outside defined target paths.
+
+#### 7. `doctor` (or `detector`)
+Runs a manifest health check to detect exact target path clashes, nested prefix path overlaps, and missing repository paths on disk.
+
+```bash
+./hybrid-syncer.py doctor
+# or
+./hybrid-syncer.py detector
+```
 
 ---
 
@@ -202,58 +232,37 @@ Performs sequential bi-directional sync (push and pull).
 
 ---
 
-### Test Case 5: Target-Filtered Synchronization
-**Goal**: Synchronize a single targeted mapping instead of all targets.
+### Test Case 5: Multi-Column Repository Status (`status`)
+**Goal**: View comprehensive sync status, commit ahead counts, local changes, and unmapped path reports across targets.
 
 ```bash
-./hybrid-syncer.py -v push -t repo-1-a
+# Display basic status table
+./hybrid-syncer.py status
+
+# Display status with unmapped path & orphan file analysis
+./hybrid-syncer.py status --check-unmapped
 ```
-**Expected Outcome**: Only the `repo-1-a-push` workflow executes.
+**Expected Outcome**: Multi-column table output detailing `Target`, `Origin Path`, `Hybrid Path`, `Origin Status`, `Hybrid Status`, and `Sync Status`, along with orphan file listings.
 
 ---
 
-### Test Case 6: Pulling Changes (Hybrid → Origin)
-**Goal**: Propagate updates made in the hybrid repository back to the origin repository.
+### Test Case 6: Manifest Doctor Health Detector (`doctor` / `detector`)
+**Goal**: Detect manifest configuration mistakes, path clashes, nested prefix overlaps, and missing repositories on disk.
 
 ```bash
-# 1. Make a change in the hybrid repository
-echo "hybrid feature addition" >> sample-repos/hybrid/repo-1/a/file.a
-git -C sample-repos/hybrid add .
-git -C sample-repos/hybrid commit -m "feat: updated file.a in hybrid"
-
-# 2. Pull changes back to origin repo-1-a
-./hybrid-syncer.py -v pull -t repo-1-a --init-history
-
-# 3. Verify changes in origin clone
-git -C sample-repos/repo-1 pull origin master
-cat sample-repos/repo-1/a/file.a
+./hybrid-syncer.py doctor
 ```
-**Expected Outcome**: The content `"hybrid feature addition"` appears in `sample-repos/repo-1/a/file.a`.
+**Expected Outcome**: Manifest health check outputs `✔ All 3 manifest target(s) passed health checks cleanly` or lists detailed error/warning diagnostics.
 
 ---
 
-### Test Case 7: Bi-Directional Synchronization with Custom Strategy
-**Goal**: Run push followed by pull (or pull followed by push) in a single command.
+### Test Case 7: Target Exclusion Sync (`exclude`)
+**Goal**: Exclude specific files and directories (e.g. `**/*.tmp`, `.github/**`) from sync migrations.
 
 ```bash
-# Push-first strategy (default)
-./hybrid-syncer.py -v sync --strategy push-first -t repo-1-a
-
-# Pull-first strategy
-./hybrid-syncer.py -v sync --strategy pull-first -t repo-1-a
+./hybrid-syncer.py generate -t repo-1-a
 ```
-**Expected Outcome**: Workflows execute in the exact specified order (`push` then `pull`, or `pull` then `push`).
-
----
-
-### Test Case 8: Custom Working Directory Execution
-**Goal**: Specify a custom directory for temporary `copy.bara.sky` files.
-
-```bash
-./hybrid-syncer.py -w ./custom_workdir -v push -n
-ls -la ./custom_workdir/copy.bara.sky
-```
-**Expected Outcome**: The generated `copy.bara.sky` file is saved and preserved in `./custom_workdir/`.
+**Expected Outcome**: Generated Starlark `origin_files` expression includes `glob(["a/**"], exclude = ["a/*.tmp", "a/**/*.tmp", "a/.github/**"])`.
 
 ---
 
@@ -264,3 +273,4 @@ ls -la ./custom_workdir/copy.bara.sky
   ```bash
   git config receive.denyCurrentBranch updateInstead
   ```
+
