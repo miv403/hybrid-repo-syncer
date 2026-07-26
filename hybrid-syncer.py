@@ -735,6 +735,119 @@ def handle_status(args):
         print(row_line)
     print()
 
+    if getattr(args, "check_unmapped", False):
+        analyze_unmapped_origin_paths(manifest, base_dir, target_filter=getattr(args, "target", ""))
+
+
+def is_file_mapped(file_path: str, mapped_paths: set[str]) -> bool:
+    if "" in mapped_paths or "." in mapped_paths:
+        return True
+    clean_f = clean_path(file_path)
+    for mp in mapped_paths:
+        clean_m = clean_path(mp)
+        if not clean_m:
+            return True
+        if clean_f == clean_m or clean_f.startswith(clean_m + "/"):
+            return True
+    return False
+
+
+def analyze_unmapped_origin_paths(manifest: dict, base_dir: Path, target_filter: str = ""):
+    targets = manifest.get("targets", {})
+    if target_filter:
+        if target_filter in targets:
+            targets_to_check = {target_filter: targets[target_filter]}
+        else:
+            targets_to_check = targets
+    else:
+        targets_to_check = targets
+
+    # Group mapped origin paths by origin repository URL
+    origin_mapped = {}  # origin_url -> set(mapped_paths)
+    origin_targets = {}  # origin_url -> list(target_names)
+
+    for t_name, t_cfg in targets_to_check.items():
+        o_cfg = t_cfg.get("origin", {})
+        o_url = resolve_repo_url(o_cfg.get("url", ""), base_dir)
+        o_path = clean_path(o_cfg.get("path", ""))
+
+        if not o_url:
+            continue
+        if o_url not in origin_mapped:
+            origin_mapped[o_url] = set()
+            origin_targets[o_url] = []
+
+        origin_mapped[o_url].add(o_path)
+        origin_targets[o_url].append(t_name)
+
+    print("\n🔍 Unmapped & Orphan Path Analysis (Origin Repositories):")
+    print("-" * 80)
+
+    total_unmapped_tracked = 0
+    total_unmapped_local = 0
+
+    for o_url, mapped_paths in origin_mapped.items():
+        repo_path = Path(o_url)
+        if not repo_path.exists():
+            continue
+
+        # Check if bare
+        actual_repo_path = repo_path
+        rc, out, _ = run_git(["-C", str(repo_path), "rev-parse", "--is-bare-repository"])
+        if rc == 0 and out.strip() == "true" and str(repo_path).endswith(".git"):
+            sibling = Path(str(repo_path)[:-4])
+            if sibling.is_dir():
+                actual_repo_path = sibling
+
+        # 1. Check tracked files in repository
+        rc, out, _ = run_git(["-C", str(actual_repo_path), "ls-files"])
+        tracked_files = [line.strip() for line in out.strip().splitlines() if line.strip()] if rc == 0 and out.strip() else []
+
+        unmapped_tracked = [f for f in tracked_files if not is_file_mapped(f, mapped_paths)]
+
+        # 2. Check uncommitted local changes
+        uncommitted_lines = check_clean_workspace(str(actual_repo_path))
+        unmapped_local = []
+        for line in uncommitted_lines:
+            parts = line.strip().split(maxsplit=1)
+            if len(parts) == 2:
+                file_p = parts[1].strip()
+                if " -> " in file_p:
+                    file_p = file_p.split(" -> ")[-1].strip()
+                if not is_file_mapped(file_p, mapped_paths):
+                    unmapped_local.append((parts[0], file_p))
+
+        if unmapped_tracked or unmapped_local:
+            total_unmapped_tracked += len(unmapped_tracked)
+            total_unmapped_local += len(unmapped_local)
+
+            display_paths = ", ".join([f"{p}/" if p else "." for p in sorted(mapped_paths)]) or "."
+            t_names = ", ".join(origin_targets[o_url])
+
+            print(f"Repository: {o_url} (Targets: {t_names})")
+            print(f"  Mapped Target Paths : {display_paths}")
+
+            if unmapped_tracked:
+                print(f"  Tracked Orphan Files ({len(unmapped_tracked)}):")
+                for uf in unmapped_tracked[:10]:
+                    print(f"    • {uf}")
+                if len(unmapped_tracked) > 10:
+                    print(f"    ... and {len(unmapped_tracked) - 10} more tracked file(s).")
+
+            if unmapped_local:
+                print(f"  Uncommitted Orphan Files ({len(unmapped_local)}):")
+                for st, uf in unmapped_local[:10]:
+                    print(f"    • [{st}] {uf}")
+                if len(unmapped_local) > 10:
+                    print(f"    ... and {len(unmapped_local) - 10} more uncommitted file(s).")
+            print()
+
+    if total_unmapped_tracked == 0 and total_unmapped_local == 0:
+        print(f"✔ No unmapped files or orphan paths detected across {len(origin_mapped)} origin repository(ies). All files match defined target paths.\n")
+    else:
+        print(f"⚠️ Notice: Detected {total_unmapped_tracked} tracked and {total_unmapped_local} uncommitted orphan file(s) outside defined target paths.")
+        print("          These files are outside any target's origin.path and will NOT be synced to hybrid repository.\n")
+
 
 def check_manifest_health(manifest: dict, config_path: Path = Path("sync-manifest.yaml")) -> tuple[int, int]:
     targets = manifest.get("targets", {})
@@ -909,6 +1022,11 @@ def build_parser() -> argparse.ArgumentParser:
         "-t", "--target",
         type=str,
         help="Filter status check to a specific target"
+    )
+    status_parser.add_argument(
+        "--check-unmapped",
+        action="store_true",
+        help="Analyze origin repositories for unmapped/orphan files outside defined target paths"
     )
     status_parser.set_defaults(func=handle_status)
 
