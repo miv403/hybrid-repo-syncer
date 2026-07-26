@@ -77,6 +77,36 @@ def resolve_repo_url(url: str, base_dir: Path) -> str:
     return str(p)
 
 
+def format_exclude_pattern(pattern: str, base_path: str) -> list[str]:
+    pattern = pattern.strip()
+    if not base_path:
+        return [pattern]
+    if pattern.startswith(base_path + "/"):
+        return [pattern]
+    if pattern.startswith("**/"):
+        suffix = pattern[3:]
+        return [f"{base_path}/{suffix}", f"{base_path}/**/{suffix}"]
+    return [f"{base_path}/{pattern}"]
+
+
+def build_glob_expr(base_path: str, exclude_patterns: list[str] | None = None) -> str:
+    include_pattern = f"{base_path}/**" if base_path else "**"
+
+    if not exclude_patterns:
+        return f'glob(["{include_pattern}"])'
+
+    formatted_excludes = []
+    for p in exclude_patterns:
+        if isinstance(p, str) and p.strip():
+            formatted_excludes.extend(format_exclude_pattern(p, base_path))
+
+    if not formatted_excludes:
+        return f'glob(["{include_pattern}"])'
+
+    excludes_str = ", ".join(f'"{p}"' for p in formatted_excludes)
+    return f'glob(["{include_pattern}"], exclude = [{excludes_str}])'
+
+
 def generate_sky_config(manifest: dict, target_filter: str = "", config_path: str = "sync-manifest.yaml") -> str:
     targets = manifest.get("targets", {})
     base_dir = Path(config_path).parent.resolve()
@@ -123,9 +153,31 @@ def generate_sky_config(manifest: dict, target_filter: str = "", config_path: st
 
         mode = t_cfg.get("mode", "ITERATIVE")
 
+        # Collect exclusion patterns
+        target_exclude = t_cfg.get("exclude", [])
+        if isinstance(target_exclude, str):
+            target_exclude = [target_exclude]
+        elif not isinstance(target_exclude, list):
+            target_exclude = []
+
+        origin_exclude_raw = origin_cfg.get("exclude", [])
+        if isinstance(origin_exclude_raw, str):
+            origin_exclude_raw = [origin_exclude_raw]
+        elif not isinstance(origin_exclude_raw, list):
+            origin_exclude_raw = []
+
+        hybrid_exclude_raw = hybrid_cfg.get("exclude", [])
+        if isinstance(hybrid_exclude_raw, str):
+            hybrid_exclude_raw = [hybrid_exclude_raw]
+        elif not isinstance(hybrid_exclude_raw, list):
+            hybrid_exclude_raw = []
+
+        origin_exclude = origin_exclude_raw + target_exclude
+        hybrid_exclude = hybrid_exclude_raw + target_exclude
+
         # Origin files & destination files patterns
-        origin_files_push = f'glob(["{origin_path}/**"])' if origin_path else 'glob(["**"])'
-        dest_files_push = f'glob(["{hybrid_path}/**"])' if hybrid_path else 'glob(["**"])'
+        origin_files_push = build_glob_expr(origin_path, origin_exclude)
+        dest_files_push = build_glob_expr(hybrid_path, hybrid_exclude)
 
         # Transformations for push
         push_trans = ""

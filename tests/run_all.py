@@ -23,6 +23,7 @@ TEST_SCENARIOS = [
     ("test_07_status_command.py", "Test Scenario 7: Status Command Verification"),
     ("test_08_doctor_command.py", "Test Scenario 8: Doctor Command Verification"),
     ("test_09_unmapped_status_check.py", "Test Scenario 9: Unmapped Path & Orphan Analyzer"),
+    ("test_10_exclusion_patterns.py", "Test Scenario 10: Target Exclusion Patterns"),
 ]
 
 
