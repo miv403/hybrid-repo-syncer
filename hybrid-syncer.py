@@ -39,6 +39,9 @@ targets:
       path: "repo-2/a"
 """
 
+RED = "\033[91m\033[1m"
+RESET = "\033[0m"
+
 
 def clean_path(p) -> str:
     if not p or p == ".":
@@ -508,7 +511,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
     for r_url, r_label in [(source_url, source_name), (dest_url, dest_name)]:
         uncommitted = check_clean_workspace(r_url)
         if uncommitted:
-            print(f"\n❌ [SAFETY CIRCUIT BREAKER] Clean Workspace Guard Failed!", file=sys.stderr)
+            print(f"\n{RED}❌ [SAFETY CIRCUIT BREAKER]{RESET} Clean Workspace Guard Failed!", file=sys.stderr)
             print(f"Target '{target_name}' ({direction}): {r_label} repository at '{r_url}' has uncommitted changes:", file=sys.stderr)
             for file_line in uncommitted[:10]:
                 print(f"  {file_line}", file=sys.stderr)
@@ -527,7 +530,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
     # --- Guard Check 1: Ancestry & History Check ---
     is_ancestor = check_ancestry_history(source_url, source_last_sync_sha)
     if not is_ancestor:
-        print(f"\n❌ [SAFETY CIRCUIT BREAKER] Ancestry & History Guard Failed!", file=sys.stderr)
+        print(f"\n{RED}❌ [SAFETY CIRCUIT BREAKER]{RESET} Ancestry & History Guard Failed!", file=sys.stderr)
         print(f"Target '{target_name}' ({direction}): {source_name} commit history was rewritten (force-push or rebase detected).", file=sys.stderr)
         print(f"Recorded last synced commit '{source_last_sync_sha[:8]}' is not in active history lineage of {source_name} ('{source_url}').", file=sys.stderr)
         print("Run with --init-history to re-baseline.", file=sys.stderr)
@@ -539,7 +542,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
         dest_url, dest_path, dest_commit_sha
     )
     if diverged:
-        print(f"\n❌ [SAFETY CIRCUIT BREAKER] Concurrent Fork Guard Failed (Divergence Detected)!", file=sys.stderr)
+        print(f"\n{RED}❌ [SAFETY CIRCUIT BREAKER]{RESET} Concurrent Fork Guard Failed (Divergence Detected)!", file=sys.stderr)
         print(f"Target '{target_name}' ({direction}): Concurrent changes detected in both {source_name} and {dest_name} since last sync point ({source_last_sync_sha[:8]}).", file=sys.stderr)
         print(f"  • {source_name} has new commits in '{source_path or '.'}'", file=sys.stderr)
         print(f"  • {dest_name} has new commits in '{dest_path or '.'}'", file=sys.stderr)
@@ -553,7 +556,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
             dest_url, dest_path
         )
         if not patch_ok:
-            print(f"\n❌ [SAFETY CIRCUIT BREAKER] Pre-Apply Patch Guard Failed (Structural / Content Conflict)!", file=sys.stderr)
+            print(f"\n{RED}❌ [SAFETY CIRCUIT BREAKER]{RESET} Pre-Apply Patch Guard Failed (Structural / Content Conflict)!", file=sys.stderr)
             print(f"Target '{target_name}' ({direction}): Incoming changes from {source_name} cannot be applied cleanly to {dest_name}.", file=sys.stderr)
             print(f"Details: {patch_err}", file=sys.stderr)
             print("Please resolve conflicts manually before syncing.", file=sys.stderr)
