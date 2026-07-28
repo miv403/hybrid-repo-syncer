@@ -69,11 +69,40 @@ def load_manifest(config_path: Path) -> dict:
     return data
 
 
+def is_remote_url(url: str) -> bool:
+    if not url:
+        return False
+    return url.startswith(("http://", "https://", "git@", "ssh://"))
+
+
+def check_remote_repo_exists(url: str) -> bool:
+    """Checks if a remote repository exists and is accessible via git ls-remote."""
+    rc, _, _ = run_git(["ls-remote", url])
+    return rc == 0
+
+
+def check_repo_exists(url: str) -> tuple[bool, str]:
+    """
+    Checks whether a repository exists on disk (if local) or via git ls-remote (if remote URL).
+    Returns (exists, error_message_suffix).
+    """
+    if is_remote_url(url):
+        if check_remote_repo_exists(url):
+            return True, ""
+        return False, "is not accessible or does not exist."
+    else:
+        if Path(url).exists():
+            return True, ""
+        return False, "does not exist on disk."
+
+
 def resolve_repo_url(url: str, base_dir: Path) -> str:
     if not url:
         return ""
-    if url.startswith(("http://", "https://", "git@", "ssh://", "file://")):
+    if url.startswith(("http://", "https://", "git@", "ssh://")):
         return url
+    if url.startswith("file://"):
+        url = url[7:]
     p = Path(url)
     if not p.is_absolute():
         p = (base_dir / p).resolve()
@@ -713,8 +742,8 @@ def handle_status(args):
         hybrid_path_display = format_path_display(hybrid_path)
 
         # Check repository existence
-        origin_exists = Path(origin_url).exists() if origin_url else False
-        hybrid_exists = Path(hybrid_url).exists() if hybrid_url else False
+        origin_exists, _ = check_repo_exists(origin_url) if origin_url else (False, "")
+        hybrid_exists, _ = check_repo_exists(hybrid_url) if hybrid_url else (False, "")
 
         if not origin_exists or not hybrid_exists:
             origin_status = "Missing Repo" if not origin_exists else "Clean"
@@ -842,6 +871,8 @@ def analyze_unmapped_origin_paths(manifest: dict, base_dir: Path, target_filter:
     total_unmapped_local = 0
 
     for o_url, mapped_paths in origin_mapped.items():
+        if not o_url or is_remote_url(o_url):
+            continue
         repo_path = Path(o_url)
         if not repo_path.exists():
             continue
@@ -925,13 +956,15 @@ def check_manifest_health(manifest: dict, config_path: Path = Path("sync-manifes
 
         if origin_url and origin_url not in checked_repos:
             checked_repos.add(origin_url)
-            if not Path(origin_url).exists():
-                errors.append(f"Target '{t_name}': Origin repository URL '{origin_url}' does not exist on disk.")
+            exists, err_msg = check_repo_exists(origin_url)
+            if not exists:
+                errors.append(f"Target '{t_name}': Origin repository URL '{origin_url}' {err_msg}")
 
         if hybrid_url and hybrid_url not in checked_repos:
             checked_repos.add(hybrid_url)
-            if not Path(hybrid_url).exists():
-                errors.append(f"Target '{t_name}': Hybrid repository URL '{hybrid_url}' does not exist on disk.")
+            exists, err_msg = check_repo_exists(hybrid_url)
+            if not exists:
+                errors.append(f"Target '{t_name}': Hybrid repository URL '{hybrid_url}' {err_msg}")
 
     # 2. Hybrid Path Clashes & Prefix Overlaps
     hybrid_paths = {}

@@ -108,6 +108,7 @@ def reset_sample_repos(project_root):
     run_cmd("./init-repo.sh 1", cwd=sample_dir)
     run_cmd("./init-repo.sh 2", cwd=sample_dir)
     run_cmd("./init-hybrid.sh 1", cwd=sample_dir)
+    run_cmd(f"python3 {project_root}/hybrid-syncer.py init -f", cwd=project_root)
     print(f"{OKGREEN}✔ Sample repositories initialized cleanly.{ENDC}\n")
 
 

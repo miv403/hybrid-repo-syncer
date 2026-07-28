@@ -11,8 +11,6 @@ targets:
     origin:
       url: "./sample-repos/repo-1.git"
       path: "a"
-    exclude:
-      - "*.out"
     hybrid:
       path: "repo-1/a"
 
