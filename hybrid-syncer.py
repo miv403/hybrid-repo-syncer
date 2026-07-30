@@ -612,7 +612,11 @@ def handle_execution(args):
 
     command = args.command  # 'push', 'pull', or 'sync'
 
-    # Run pre-flight guard checks
+    # Run pre-flight guard checks & collect sync point SHAs
+    workflow_last_revs = {}
+    base_dir = Path(args.config).parent.resolve()
+    default_hybrid_url = manifest.get("hybrid_repo", "./hybrid")
+
     for target_name in target_names:
         t_cfg = targets[target_name]
         if command == "push":
@@ -629,6 +633,25 @@ def handle_execution(args):
             ok = run_preflight_guards(target_name, direction, t_cfg, manifest, str(args.config), args)
             if not ok:
                 sys.exit(1)
+
+            # Resolve effective last synced SHA for Copybara
+            origin_cfg = t_cfg.get("origin", {})
+            hybrid_cfg = t_cfg.get("hybrid", {})
+
+            origin_url = resolve_repo_url(origin_cfg.get("url", ""), base_dir)
+            origin_path = clean_path(origin_cfg.get("path", ""))
+            hybrid_url = resolve_repo_url(hybrid_cfg.get("url", default_hybrid_url), base_dir)
+            hybrid_path = clean_path(hybrid_cfg.get("path", ""))
+
+            if direction == "push":
+                src_url, src_path, dst_url, dst_path = origin_url, origin_path, hybrid_url, hybrid_path
+            else:
+                src_url, src_path, dst_url, dst_path = hybrid_url, hybrid_path, origin_url, origin_path
+
+            last_sync_sha, _ = find_effective_sync_point(src_url, src_path, dst_url, dst_path)
+            dest_has_revid, _ = find_last_sync_info(dst_url, dst_path)
+            if last_sync_sha and not dest_has_revid:
+                workflow_last_revs[f"{target_name}-{direction}"] = last_sync_sha
 
     # Determine workflows to run
     workflows = []
@@ -651,16 +674,17 @@ def handle_execution(args):
         workdir.mkdir(parents=True, exist_ok=True)
         sky_path = workdir / "copy.bara.sky"
         sky_path.write_text(sky_content, encoding="utf-8")
-        run_workflows(workflows, sky_path, args)
+        run_workflows(workflows, sky_path, args, workflow_last_revs)
     else:
         with tempfile.TemporaryDirectory(prefix="hybrid_syncer_") as tmp_dir:
             sky_path = Path(tmp_dir) / "copy.bara.sky"
             sky_path.write_text(sky_content, encoding="utf-8")
-            run_workflows(workflows, sky_path, args)
+            run_workflows(workflows, sky_path, args, workflow_last_revs)
 
 
-def run_workflows(workflows, sky_path: Path, args):
+def run_workflows(workflows, sky_path: Path, args, workflow_last_revs=None):
     copybara_bin = shutil.which("copybara")
+    workflow_last_revs = workflow_last_revs or {}
 
     if args.verbose:
         print(f"[VERBOSE] Prepared Starlark spec at: {sky_path}")
@@ -673,11 +697,18 @@ def run_workflows(workflows, sky_path: Path, args):
         for wf in workflows:
             dry_flag = " --dry-run" if args.dry_run else ""
             init_flag = " --init-history" if getattr(args, "init_history", False) else ""
-            print(f"  $ copybara migrate {sky_path} {wf}{dry_flag}{init_flag}")
+            last_rev_str = f" {workflow_last_revs.get(wf)}" if workflow_last_revs.get(wf) else ""
+            print(f"  $ copybara migrate {sky_path} {wf}{last_rev_str}{dry_flag}{init_flag}")
         return
 
     for wf in workflows:
         cmd = [copybara_bin, "migrate", str(sky_path), wf]
+        
+        # Append starting revision if a previous sync point exists and init_history is not set
+        last_rev = workflow_last_revs.get(wf)
+        if last_rev and not getattr(args, "init_history", False):
+            cmd.append(last_rev)
+
         if args.dry_run:
             cmd.append("--dry-run")
         if getattr(args, "init_history", False):
