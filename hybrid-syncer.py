@@ -359,13 +359,28 @@ def _parse_log_for_revid(log_out: str) -> tuple[str | None, str | None]:
 def find_last_sync_info(dest_repo_url: str, dest_path: str = "") -> tuple[str | None, str | None]:
     """
     Searches dest_repo commit log for the last Copybara sync commit containing GitOrigin-RevId.
+    Supports both local file paths and remote HTTP/HTTPS URLs.
     Returns (dest_commit_sha, source_origin_sha) or (None, None).
     """
-    dest_path_obj = Path(dest_repo_url)
-    if not dest_path_obj.exists():
+    if not dest_repo_url:
         return None, None
 
-    cmd = ["-C", str(dest_path_obj), "log", "--grep=GitOrigin-RevId:", "-n", "50", "--format=%H%n%B%x00"]
+    if is_remote_url(dest_repo_url):
+        with tempfile.TemporaryDirectory(prefix="syncer_git_") as tmp_dir:
+            # Clone bare shallow repo log to inspect commit messages
+            rc, _, _ = run_git(["clone", "--bare", "--depth=50", dest_repo_url, tmp_dir])
+            if rc != 0:
+                return None, None
+            return _extract_sync_info_from_dir(Path(tmp_dir), dest_path)
+    else:
+        dest_path_obj = Path(dest_repo_url)
+        if not dest_path_obj.exists():
+            return None, None
+        return _extract_sync_info_from_dir(dest_path_obj, dest_path)
+
+
+def _extract_sync_info_from_dir(repo_dir: Path, dest_path: str = "") -> tuple[str | None, str | None]:
+    cmd = ["-C", str(repo_dir), "log", "--grep=GitOrigin-RevId:", "-n", "50", "--format=%H%n%B%x00"]
     if dest_path:
         cmd_with_path = cmd + ["--", dest_path]
         rc, out, _ = run_git(cmd_with_path)
