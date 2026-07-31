@@ -1,28 +1,62 @@
 #!/usr/bin/env python3
 import http.server
 import json
+import os
 import subprocess
 import sys
 import threading
+from pathlib import Path
+import yaml
 
 PORT = 8000
 DEFAULT_SYNCER_EMAIL = "syncer@example.com"
 SYNCER_EMAIL = DEFAULT_SYNCER_EMAIL
-syncer_email = SYNCER_EMAIL
+
+sync_lock = threading.Lock()
+
+def get_syncer_emails() -> set[str]:
+    """Collect all known syncer email addresses from environment, defaults, and sync-manifest.yaml."""
+    emails = {DEFAULT_SYNCER_EMAIL.lower()}
+    
+    env_email = os.environ.get("SYNCER_EMAIL")
+    if env_email:
+        emails.add(env_email.strip().lower())
+
+    env_emails = os.environ.get("SYNCER_EMAILS")
+    if env_emails:
+        for e in env_emails.split(","):
+            if e.strip():
+                emails.add(e.strip().lower())
+
+    manifest_paths = [Path("/app/sync-manifest.yaml"), Path("sync-manifest.yaml")]
+    for mp in manifest_paths:
+        if mp.exists():
+            try:
+                with open(mp, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+                    m_email = data.get("authoring", {}).get("default_email")
+                    if m_email and isinstance(m_email, str):
+                        emails.add(m_email.strip().lower())
+            except Exception:
+                pass
+    return emails
 
 def execute_sync():
     print("[TRIGGER] Starting hybrid-syncer process in background...")
-    res = subprocess.run(
-        ["python3", "/app/hybrid-syncer.py", "-v", "sync"],
-        capture_output=True,
-        text=True
-    )
-    if res.stdout:
-        print(res.stdout)
-    if res.returncode != 0:
-        print(f"[ERROR] Sync failed:\n{res.stderr}", file=sys.stderr)
-    else:
-        print("[TRIGGER] Hybrid sync completed successfully.")
+    try:
+        res = subprocess.run(
+            ["python3", "/app/hybrid-syncer.py", "-v", "sync"],
+            capture_output=True,
+            text=True
+        )
+        if res.stdout:
+            print(res.stdout)
+        if res.returncode != 0:
+            print(f"[ERROR] Sync failed:\n{res.stderr}", file=sys.stderr)
+        else:
+            print("[TRIGGER] Hybrid sync completed successfully.")
+    finally:
+        sync_lock.release()
 
 class WebhookHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
@@ -33,30 +67,49 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             payload = json.loads(post_data.decode('utf-8')) if post_data else {}
             repo_name = payload.get('repository', {}).get('full_name', 'unknown')
             
-            # Extract pusher, sender, author, committer, and message to prevent self-trigger loops
-            pusher_email = payload.get('pusher', {}).get('email', '')
-            sender_email = payload.get('sender', {}).get('email', '')
-            head_commit_author = payload.get('head_commit', {}).get('author', {}).get('email', '')
-            head_commit_committer = payload.get('head_commit', {}).get('committer', {}).get('email', '')
+            commits = payload.get('commits', [])
+            if not isinstance(commits, list):
+                commits = []
+
+            # Check for GitOrigin-RevId watermark across head_commit and all commits
+            all_messages = []
             head_commit_msg = payload.get('head_commit', {}).get('message', '')
+            if head_commit_msg:
+                all_messages.append(head_commit_msg)
+            for c in commits:
+                if isinstance(c, dict) and c.get('message'):
+                    all_messages.append(c.get('message'))
 
-            emails_to_check = {syncer_email, DEFAULT_SYNCER_EMAIL}
+            is_copybara_commit = any("GitOrigin-RevId:" in msg for msg in all_messages)
 
-            # Check committer email across all pushed commits in the payload
-            committers_in_payload = {
-                c.get('committer', {}).get('email', '')
-                for c in payload.get('commits', [])
-                if isinstance(c, dict)
-            }
+            # Collect all author, committer, pusher, and sender emails in payload
+            payload_emails = set()
+            for key in ('pusher', 'sender'):
+                e = payload.get(key, {}).get('email', '')
+                if e and isinstance(e, str):
+                    payload_emails.add(e.strip().lower())
 
-            is_syncer_committer = (
-                head_commit_committer in emails_to_check or
-                bool(committers_in_payload & emails_to_check)
-            )
-            is_syncer_email = any(e and e in emails_to_check for e in (pusher_email, sender_email, head_commit_author))
-            is_copybara_commit = "GitOrigin-RevId:" in head_commit_msg
+            head_author = payload.get('head_commit', {}).get('author', {}).get('email', '')
+            if head_author and isinstance(head_author, str):
+                payload_emails.add(head_author.strip().lower())
 
-            if is_syncer_committer or is_syncer_email or is_copybara_commit:
+            head_committer = payload.get('head_commit', {}).get('committer', {}).get('email', '')
+            if head_committer and isinstance(head_committer, str):
+                payload_emails.add(head_committer.strip().lower())
+
+            for c in commits:
+                if isinstance(c, dict):
+                    a_e = c.get('author', {}).get('email', '')
+                    if a_e and isinstance(a_e, str):
+                        payload_emails.add(a_e.strip().lower())
+                    c_e = c.get('committer', {}).get('email', '')
+                    if c_e and isinstance(c_e, str):
+                        payload_emails.add(c_e.strip().lower())
+
+            syncer_emails = get_syncer_emails()
+            is_syncer_email = bool(payload_emails & syncer_emails)
+
+            if is_syncer_email or is_copybara_commit:
                 print(f"[IGNORE] Skipping webhook for {repo_name} triggered by syncer/Copybara commit.")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -64,9 +117,18 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b'{"status": "ignored", "reason": "syncer_loop_prevention"}')
                 return
 
+            # Non-blocking lock check to prevent concurrent sync executions
+            if not sync_lock.acquire(blocking=False):
+                print(f"[IGNORE] Skipping webhook for {repo_name}: sync process already running.")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ignored", "reason": "sync_in_progress"}')
+                return
+
             print(f"[TRIGGER] Received webhook for repository: {repo_name}")
             
-            # Respond immediately to Gitea to prevent timeout and BrokenPipeError
+            # Respond immediately to Gitea to prevent timeout
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()

@@ -312,12 +312,39 @@ def run_git(args: list, cwd=None) -> tuple[int, str, str]:
         return -1, "", str(e)
 
 
+def get_repo_path(repo_url: str, temp_dirs: dict | None = None) -> tuple[Path | None, bool]:
+    """
+    Returns (Path_to_repo, is_temporary).
+    If repo_url is remote, clones bare repository to a temporary directory (or reuses temp_dirs[repo_url]).
+    """
+    if not repo_url:
+        return None, False
+
+    if not is_remote_url(repo_url):
+        p = Path(repo_url)
+        return (p if p.exists() else None), False
+
+    if temp_dirs is not None and repo_url in temp_dirs:
+        return temp_dirs[repo_url], False
+
+    tmp_dir = tempfile.mkdtemp(prefix="syncer_remote_")
+    rc, _, _ = run_git(["clone", "--bare", repo_url, tmp_dir])
+    if rc != 0:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return None, False
+
+    tmp_path = Path(tmp_dir)
+    if temp_dirs is not None:
+        temp_dirs[repo_url] = tmp_path
+    return tmp_path, True
+
+
 def check_clean_workspace(repo_url: str) -> list[str]:
     """
     Checks if a local non-bare git workspace has uncommitted changes.
     Returns list of porcelain status lines if uncommitted changes exist.
     """
-    if not repo_url:
+    if not repo_url or is_remote_url(repo_url):
         return []
     repo_path = Path(repo_url)
     if not repo_path.is_dir():
@@ -356,7 +383,7 @@ def _parse_log_for_revid(log_out: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def find_last_sync_info(dest_repo_url: str, dest_path: str = "") -> tuple[str | None, str | None]:
+def find_last_sync_info(dest_repo_url: str, dest_path: str = "", temp_dirs: dict | None = None) -> tuple[str | None, str | None]:
     """
     Searches dest_repo commit log for the last Copybara sync commit containing GitOrigin-RevId.
     Supports both local file paths and remote HTTP/HTTPS URLs.
@@ -365,22 +392,19 @@ def find_last_sync_info(dest_repo_url: str, dest_path: str = "") -> tuple[str | 
     if not dest_repo_url:
         return None, None
 
-    if is_remote_url(dest_repo_url):
-        with tempfile.TemporaryDirectory(prefix="syncer_git_") as tmp_dir:
-            # Clone bare shallow repo log to inspect commit messages
-            rc, _, _ = run_git(["clone", "--bare", "--depth=50", dest_repo_url, tmp_dir])
-            if rc != 0:
-                return None, None
-            return _extract_sync_info_from_dir(Path(tmp_dir), dest_path)
-    else:
-        dest_path_obj = Path(dest_repo_url)
-        if not dest_path_obj.exists():
-            return None, None
-        return _extract_sync_info_from_dir(dest_path_obj, dest_path)
+    repo_dir, is_temp = get_repo_path(dest_repo_url, temp_dirs)
+    if not repo_dir:
+        return None, None
+
+    try:
+        return _extract_sync_info_from_dir(repo_dir, dest_path)
+    finally:
+        if is_temp and temp_dirs is None:
+            shutil.rmtree(str(repo_dir), ignore_errors=True)
 
 
 def _extract_sync_info_from_dir(repo_dir: Path, dest_path: str = "") -> tuple[str | None, str | None]:
-    cmd = ["-C", str(repo_dir), "log", "--grep=GitOrigin-RevId:", "-n", "50", "--format=%H%n%B%x00"]
+    cmd = ["-C", str(repo_dir), "log", "--grep=GitOrigin-RevId:", "-n", "500", "--format=%H%n%B%x00"]
     if dest_path:
         cmd_with_path = cmd + ["--", dest_path]
         rc, out, _ = run_git(cmd_with_path)
@@ -396,14 +420,14 @@ def _extract_sync_info_from_dir(repo_dir: Path, dest_path: str = "") -> tuple[st
     return None, None
 
 
-def find_effective_sync_point(source_url: str, source_path: str, dest_url: str, dest_path: str) -> tuple[str | None, str | None]:
+def find_effective_sync_point(source_url: str, source_path: str, dest_url: str, dest_path: str, temp_dirs: dict | None = None) -> tuple[str | None, str | None]:
     """
     Finds the most recent sync point (source_last_sync_sha, dest_last_sync_sha) between source and dest repositories.
     Checks GitOrigin-RevId in both dest log (push) and source log (pull) to find the newest sync point.
     Returns (source_sync_sha, dest_sync_sha) or (None, None).
     """
-    dest_commit_sha1, source_rev_id1 = find_last_sync_info(dest_url, dest_path)
-    source_commit_sha2, dest_rev_id2 = find_last_sync_info(source_url, source_path)
+    dest_commit_sha1, source_rev_id1 = find_last_sync_info(dest_url, dest_path, temp_dirs)
+    source_commit_sha2, dest_rev_id2 = find_last_sync_info(source_url, source_path, temp_dirs)
 
     if not (dest_commit_sha1 and source_rev_id1) and not (source_commit_sha2 and dest_rev_id2):
         return None, None
@@ -415,115 +439,138 @@ def find_effective_sync_point(source_url: str, source_path: str, dest_url: str, 
         return source_commit_sha2, dest_rev_id2
 
     # Compare which sync point is newer in source repository history
-    source_path_obj = Path(source_url)
-    if source_path_obj.exists():
-        rc, _, _ = run_git(["-C", str(source_path_obj), "merge-base", "--is-ancestor", source_rev_id1, source_commit_sha2])
-        if rc == 0:
-            return source_commit_sha2, dest_rev_id2
+    source_dir, is_temp = get_repo_path(source_url, temp_dirs)
+    if source_dir:
+        try:
+            rc, _, _ = run_git(["-C", str(source_dir), "merge-base", "--is-ancestor", source_rev_id1, source_commit_sha2])
+            if rc == 0:
+                return source_commit_sha2, dest_rev_id2
+        finally:
+            if is_temp and temp_dirs is None:
+                shutil.rmtree(str(source_dir), ignore_errors=True)
 
     return source_rev_id1, dest_commit_sha1
 
 
-def check_ancestry_history(source_repo_url: str, last_sync_source_sha: str) -> bool:
+def check_ancestry_history(source_repo_url: str, last_sync_source_sha: str, temp_dirs: dict | None = None) -> bool:
     """
     Checks if last_sync_source_sha is still an ancestor of HEAD in source_repo.
     Returns False if history was rewritten / rebased / force-pushed.
+    Supports both local file paths and remote HTTP/HTTPS URLs.
     """
-    source_path_obj = Path(source_repo_url)
-    if not source_path_obj.exists():
+    source_dir, is_temp = get_repo_path(source_repo_url, temp_dirs)
+    if not source_dir:
         return True
 
-    # Check commit existence
-    rc, _, _ = run_git(["-C", str(source_path_obj), "cat-file", "-e", f"{last_sync_source_sha}^{{commit}}"])
-    if rc != 0:
-        return False
+    try:
+        # Check commit existence
+        rc, _, _ = run_git(["-C", str(source_dir), "cat-file", "-e", f"{last_sync_source_sha}^{{commit}}"])
+        if rc != 0:
+            return False
 
-    rc, _, _ = run_git(["-C", str(source_path_obj), "merge-base", "--is-ancestor", last_sync_source_sha, "HEAD"])
-    return rc == 0
+        rc, _, _ = run_git(["-C", str(source_dir), "merge-base", "--is-ancestor", last_sync_source_sha, "HEAD"])
+        return rc == 0
+    finally:
+        if is_temp and temp_dirs is None:
+            shutil.rmtree(str(source_dir), ignore_errors=True)
 
 
-def get_new_commits_count(repo_url: str, from_sha: str, path_filter: str = "") -> int:
-    repo_path_obj = Path(repo_url)
-    if not repo_path_obj.exists():
+def get_new_commits_count(repo_url: str, from_sha: str, path_filter: str = "", temp_dirs: dict | None = None) -> int:
+    repo_dir, is_temp = get_repo_path(repo_url, temp_dirs)
+    if not repo_dir:
         return 0
 
-    cmd = ["-C", str(repo_path_obj), "rev-list", f"{from_sha}..HEAD"]
-    if path_filter:
-        cmd.extend(["--", path_filter])
+    try:
+        cmd = ["-C", str(repo_dir), "rev-list", f"{from_sha}..HEAD"]
+        if path_filter:
+            cmd.extend(["--", path_filter])
 
-    rc, out, _ = run_git(cmd)
-    if rc == 0 and out.strip():
-        return len([line for line in out.strip().splitlines() if line.strip()])
-    return 0
+        rc, out, _ = run_git(cmd)
+        if rc == 0 and out.strip():
+            return len([line for line in out.strip().splitlines() if line.strip()])
+        return 0
+    finally:
+        if is_temp and temp_dirs is None:
+            shutil.rmtree(str(repo_dir), ignore_errors=True)
 
 
 def check_divergence(source_repo_url: str, source_path: str, last_sync_source_sha: str,
-                     dest_repo_url: str, dest_path: str, dest_sync_commit_sha: str) -> tuple[bool, bool, bool]:
-    source_new = get_new_commits_count(source_repo_url, last_sync_source_sha, source_path) > 0
-    dest_new = get_new_commits_count(dest_repo_url, dest_sync_commit_sha, dest_path) > 0
+                     dest_repo_url: str, dest_path: str, dest_sync_commit_sha: str,
+                     temp_dirs: dict | None = None) -> tuple[bool, bool, bool]:
+    source_new = get_new_commits_count(source_repo_url, last_sync_source_sha, source_path, temp_dirs) > 0
+    dest_new = get_new_commits_count(dest_repo_url, dest_sync_commit_sha, dest_path, temp_dirs) > 0
     diverged = source_new and dest_new
     return diverged, source_new, dest_new
 
 
 def check_pre_apply_patch(source_repo_url: str, source_path: str, last_sync_source_sha: str,
-                          dest_repo_url: str, dest_path: str) -> tuple[bool, str]:
-    source_path_obj = Path(source_repo_url)
-    dest_path_obj = Path(dest_repo_url)
+                          dest_repo_url: str, dest_path: str,
+                          temp_dirs: dict | None = None) -> tuple[bool, str]:
+    source_dir, src_is_temp = get_repo_path(source_repo_url, temp_dirs)
+    dest_dir, dst_is_temp = get_repo_path(dest_repo_url, temp_dirs)
 
-    if str(dest_path_obj).endswith(".git"):
-        sibling_working_dir = Path(str(dest_path_obj)[:-4])
-        if sibling_working_dir.is_dir():
-            dest_path_obj = sibling_working_dir
-
-    if str(source_path_obj).endswith(".git"):
-        sibling_working_dir = Path(str(source_path_obj)[:-4])
-        if sibling_working_dir.is_dir():
-            source_path_obj = sibling_working_dir
-
-    if not source_path_obj.exists() or not dest_path_obj.exists():
+    if not source_dir or not dest_dir:
         return True, ""
-
-    # Skip git apply check if target destination is bare
-    rc, out, _ = run_git(["-C", str(dest_path_obj), "rev-parse", "--is-bare-repository"])
-    if rc == 0 and out.strip() == "true":
-        return True, ""
-
-    diff_cmd = ["-C", str(source_path_obj), "diff", f"{last_sync_source_sha}..HEAD"]
-    if source_path:
-        diff_cmd.extend(["--", source_path])
-
-    rc, patch_text, _ = run_git(diff_cmd)
-    if rc != 0 or not patch_text.strip():
-        return True, ""
-
-    clean_src_path = source_path.strip("/")
-    src_parts = [p for p in clean_src_path.split("/") if p]
-    strip_level = 1 + len(src_parts)
-
-    clean_dst_path = dest_path.strip("/")
-
-    apply_cmd = ["-C", str(dest_path_obj), "apply", "--check", f"-p{strip_level}"]
-    if clean_dst_path:
-        apply_cmd.append(f"--directory={clean_dst_path}")
 
     try:
-        res = subprocess.run(
-            ["git"] + apply_cmd,
-            input=patch_text,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        if res.returncode != 0:
-            err_msg = res.stderr.strip() or res.stdout.strip() or f"exit code {res.returncode}"
-            return False, err_msg
-    except Exception as e:
-        return False, str(e)
+        dest_path_obj = dest_dir
+        if str(dest_path_obj).endswith(".git"):
+            sibling_working_dir = Path(str(dest_path_obj)[:-4])
+            if sibling_working_dir.is_dir():
+                dest_path_obj = sibling_working_dir
 
-    return True, ""
+        source_path_obj = source_dir
+        if str(source_path_obj).endswith(".git"):
+            sibling_working_dir = Path(str(source_path_obj)[:-4])
+            if sibling_working_dir.is_dir():
+                source_path_obj = sibling_working_dir
+
+        # Skip git apply check if target destination is bare (including remote bare repos)
+        rc, out, _ = run_git(["-C", str(dest_path_obj), "rev-parse", "--is-bare-repository"])
+        if rc == 0 and out.strip() == "true":
+            return True, ""
+
+        diff_cmd = ["-C", str(source_path_obj), "diff", f"{last_sync_source_sha}..HEAD"]
+        if source_path:
+            diff_cmd.extend(["--", source_path])
+
+        rc, patch_text, _ = run_git(diff_cmd)
+        if rc != 0 or not patch_text.strip():
+            return True, ""
+
+        clean_src_path = source_path.strip("/")
+        src_parts = [p for p in clean_src_path.split("/") if p]
+        strip_level = 1 + len(src_parts)
+
+        clean_dst_path = dest_path.strip("/")
+
+        apply_cmd = ["-C", str(dest_path_obj), "apply", "--check", f"-p{strip_level}"]
+        if clean_dst_path:
+            apply_cmd.append(f"--directory={clean_dst_path}")
+
+        try:
+            res = subprocess.run(
+                ["git"] + apply_cmd,
+                input=patch_text,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            if res.returncode != 0:
+                err_msg = res.stderr.strip() or res.stdout.strip() or f"exit code {res.returncode}"
+                return False, err_msg
+        except Exception as e:
+            return False, str(e)
+
+        return True, ""
+    finally:
+        if src_is_temp and temp_dirs is None and source_dir:
+            shutil.rmtree(str(source_dir), ignore_errors=True)
+        if dst_is_temp and temp_dirs is None and dest_dir:
+            shutil.rmtree(str(dest_dir), ignore_errors=True)
 
 
-def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, manifest: dict, config_path: str, args) -> bool:
+def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, manifest: dict, config_path: str, args, temp_dirs: dict | None = None) -> bool:
     if getattr(args, "skip_guards", False):
         if args.verbose:
             print(f"[VERBOSE] Guard checks explicitly skipped via --skip-guards for {target_name} ({direction})")
@@ -564,7 +611,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
             print("Please commit or stash your changes before syncing.", file=sys.stderr)
             return False
 
-    source_last_sync_sha, dest_commit_sha = find_effective_sync_point(source_url, source_path, dest_url, dest_path)
+    source_last_sync_sha, dest_commit_sha = find_effective_sync_point(source_url, source_path, dest_url, dest_path, temp_dirs)
 
     if not source_last_sync_sha or not dest_commit_sha:
         if args.verbose:
@@ -572,7 +619,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
         return True
 
     # --- Guard Check 1: Ancestry & History Check ---
-    is_ancestor = check_ancestry_history(source_url, source_last_sync_sha)
+    is_ancestor = check_ancestry_history(source_url, source_last_sync_sha, temp_dirs)
     if not is_ancestor:
         print(f"\n{RED}❌ [SAFETY CIRCUIT BREAKER]{RESET} Ancestry & History Guard Failed!", file=sys.stderr)
         print(f"Target '{target_name}' ({direction}): {source_name} commit history was rewritten (force-push or rebase detected).", file=sys.stderr)
@@ -583,7 +630,8 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
     # --- Guard Check 2: Concurrent Fork Check (Divergence Guard) ---
     diverged, source_new, dest_new = check_divergence(
         source_url, source_path, source_last_sync_sha,
-        dest_url, dest_path, dest_commit_sha
+        dest_url, dest_path, dest_commit_sha,
+        temp_dirs
     )
     if diverged:
         print(f"\n{RED}❌ [SAFETY CIRCUIT BREAKER]{RESET} Concurrent Fork Guard Failed (Divergence Detected)!", file=sys.stderr)
@@ -597,7 +645,8 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
     if source_new:
         patch_ok, patch_err = check_pre_apply_patch(
             source_url, source_path, source_last_sync_sha,
-            dest_url, dest_path
+            dest_url, dest_path,
+            temp_dirs
         )
         if not patch_ok:
             print(f"\n{RED}❌ [SAFETY CIRCUIT BREAKER]{RESET} Pre-Apply Patch Guard Failed (Structural / Content Conflict)!", file=sys.stderr)
@@ -632,69 +681,75 @@ def handle_execution(args):
     base_dir = Path(args.config).parent.resolve()
     default_hybrid_url = manifest.get("hybrid_repo", "./hybrid")
 
-    for target_name in target_names:
-        t_cfg = targets[target_name]
+    temp_dirs = {}
+    try:
+        for target_name in target_names:
+            t_cfg = targets[target_name]
+            if command == "push":
+                dirs_to_check = ["push"]
+            elif command == "pull":
+                dirs_to_check = ["pull"]
+            elif command == "sync":
+                strategy = getattr(args, "strategy", "push-first")
+                dirs_to_check = ["push", "pull"] if strategy == "push-first" else ["pull", "push"]
+            else:
+                dirs_to_check = []
+
+            for direction in dirs_to_check:
+                ok = run_preflight_guards(target_name, direction, t_cfg, manifest, str(args.config), args, temp_dirs)
+                if not ok:
+                    sys.exit(1)
+
+                # Resolve effective last synced SHA for Copybara
+                origin_cfg = t_cfg.get("origin", {})
+                hybrid_cfg = t_cfg.get("hybrid", {})
+
+                origin_url = resolve_repo_url(origin_cfg.get("url", ""), base_dir)
+                origin_path = clean_path(origin_cfg.get("path", ""))
+                hybrid_url = resolve_repo_url(hybrid_cfg.get("url", default_hybrid_url), base_dir)
+                hybrid_path = clean_path(hybrid_cfg.get("path", ""))
+
+                if direction == "push":
+                    src_url, src_path, dst_url, dst_path = origin_url, origin_path, hybrid_url, hybrid_path
+                else:
+                    src_url, src_path, dst_url, dst_path = hybrid_url, hybrid_path, origin_url, origin_path
+
+                last_sync_sha, _ = find_effective_sync_point(src_url, src_path, dst_url, dst_path, temp_dirs)
+                dest_has_revid, _ = find_last_sync_info(dst_url, dst_path, temp_dirs)
+                if last_sync_sha and not dest_has_revid:
+                    workflow_last_revs[f"{target_name}-{direction}"] = last_sync_sha
+
+        # Determine workflows to run
+        workflows = []
         if command == "push":
-            dirs_to_check = ["push"]
+            workflows = [f"{t}-push" for t in target_names]
         elif command == "pull":
-            dirs_to_check = ["pull"]
+            workflows = [f"{t}-pull" for t in target_names]
         elif command == "sync":
             strategy = getattr(args, "strategy", "push-first")
-            dirs_to_check = ["push", "pull"] if strategy == "push-first" else ["pull", "push"]
-        else:
-            dirs_to_check = []
+            if strategy == "push-first":
+                workflows = [f"{t}-push" for t in target_names] + [f"{t}-pull" for t in target_names]
+            else:  # pull-first
+                workflows = [f"{t}-pull" for t in target_names] + [f"{t}-push" for t in target_names]
 
-        for direction in dirs_to_check:
-            ok = run_preflight_guards(target_name, direction, t_cfg, manifest, str(args.config), args)
-            if not ok:
-                sys.exit(1)
+        sky_content = generate_sky_config(manifest, target_filter=args.target, config_path=str(args.config))
 
-            # Resolve effective last synced SHA for Copybara
-            origin_cfg = t_cfg.get("origin", {})
-            hybrid_cfg = t_cfg.get("hybrid", {})
-
-            origin_url = resolve_repo_url(origin_cfg.get("url", ""), base_dir)
-            origin_path = clean_path(origin_cfg.get("path", ""))
-            hybrid_url = resolve_repo_url(hybrid_cfg.get("url", default_hybrid_url), base_dir)
-            hybrid_path = clean_path(hybrid_cfg.get("path", ""))
-
-            if direction == "push":
-                src_url, src_path, dst_url, dst_path = origin_url, origin_path, hybrid_url, hybrid_path
-            else:
-                src_url, src_path, dst_url, dst_path = hybrid_url, hybrid_path, origin_url, origin_path
-
-            last_sync_sha, _ = find_effective_sync_point(src_url, src_path, dst_url, dst_path)
-            dest_has_revid, _ = find_last_sync_info(dst_url, dst_path)
-            if last_sync_sha and not dest_has_revid:
-                workflow_last_revs[f"{target_name}-{direction}"] = last_sync_sha
-
-    # Determine workflows to run
-    workflows = []
-    if command == "push":
-        workflows = [f"{t}-push" for t in target_names]
-    elif command == "pull":
-        workflows = [f"{t}-pull" for t in target_names]
-    elif command == "sync":
-        strategy = getattr(args, "strategy", "push-first")
-        if strategy == "push-first":
-            workflows = [f"{t}-push" for t in target_names] + [f"{t}-pull" for t in target_names]
-        else:  # pull-first
-            workflows = [f"{t}-pull" for t in target_names] + [f"{t}-push" for t in target_names]
-
-    sky_content = generate_sky_config(manifest, target_filter=args.target, config_path=str(args.config))
-
-    # Manage working directory for .sky file
-    if args.workdir:
-        workdir = args.workdir
-        workdir.mkdir(parents=True, exist_ok=True)
-        sky_path = workdir / "copy.bara.sky"
-        sky_path.write_text(sky_content, encoding="utf-8")
-        run_workflows(workflows, sky_path, args, workflow_last_revs)
-    else:
-        with tempfile.TemporaryDirectory(prefix="hybrid_syncer_") as tmp_dir:
-            sky_path = Path(tmp_dir) / "copy.bara.sky"
+        # Manage working directory for .sky file
+        if args.workdir:
+            workdir = args.workdir
+            workdir.mkdir(parents=True, exist_ok=True)
+            sky_path = workdir / "copy.bara.sky"
             sky_path.write_text(sky_content, encoding="utf-8")
             run_workflows(workflows, sky_path, args, workflow_last_revs)
+        else:
+            with tempfile.TemporaryDirectory(prefix="hybrid_syncer_") as tmp_dir:
+                sky_path = Path(tmp_dir) / "copy.bara.sky"
+                sky_path.write_text(sky_content, encoding="utf-8")
+                run_workflows(workflows, sky_path, args, workflow_last_revs)
+    finally:
+        for t_path in temp_dirs.values():
+            shutil.rmtree(str(t_path), ignore_errors=True)
+
 
 
 def run_workflows(workflows, sky_path: Path, args, workflow_last_revs=None):
@@ -775,76 +830,81 @@ def handle_status(args):
     headers = ["Target", "Origin Path", "Hybrid Path", "Origin Status", "Hybrid Status", "Sync Status"]
     rows = []
 
-    for t_name, t_cfg in targets_to_check.items():
-        origin_cfg = t_cfg.get("origin", {})
-        hybrid_cfg = t_cfg.get("hybrid", {})
+    temp_dirs = {}
+    try:
+        for t_name, t_cfg in targets_to_check.items():
+            origin_cfg = t_cfg.get("origin", {})
+            hybrid_cfg = t_cfg.get("hybrid", {})
 
-        origin_url = resolve_repo_url(origin_cfg.get("url", ""), base_dir)
-        origin_path = clean_path(origin_cfg.get("path", ""))
-        hybrid_url = resolve_repo_url(hybrid_cfg.get("url", default_hybrid_url), base_dir)
-        hybrid_path = clean_path(hybrid_cfg.get("path", ""))
+            origin_url = resolve_repo_url(origin_cfg.get("url", ""), base_dir)
+            origin_path = clean_path(origin_cfg.get("path", ""))
+            hybrid_url = resolve_repo_url(hybrid_cfg.get("url", default_hybrid_url), base_dir)
+            hybrid_path = clean_path(hybrid_cfg.get("path", ""))
 
-        origin_path_display = format_path_display(origin_path)
-        hybrid_path_display = format_path_display(hybrid_path)
+            origin_path_display = format_path_display(origin_path)
+            hybrid_path_display = format_path_display(hybrid_path)
 
-        # Check repository existence
-        origin_exists, _ = check_repo_exists(origin_url) if origin_url else (False, "")
-        hybrid_exists, _ = check_repo_exists(hybrid_url) if hybrid_url else (False, "")
+            # Check repository existence
+            origin_exists, _ = check_repo_exists(origin_url) if origin_url else (False, "")
+            hybrid_exists, _ = check_repo_exists(hybrid_url) if hybrid_url else (False, "")
 
-        if not origin_exists or not hybrid_exists:
-            origin_status = "Missing Repo" if not origin_exists else "Clean"
-            hybrid_status = "Missing Repo" if not hybrid_exists else "Clean"
-            sync_status = "Repository Not Found"
-            rows.append((t_name, origin_path_display, hybrid_path_display, origin_status, hybrid_status, sync_status))
-            continue
+            if not origin_exists or not hybrid_exists:
+                origin_status = "Missing Repo" if not origin_exists else "Clean"
+                hybrid_status = "Missing Repo" if not hybrid_exists else "Clean"
+                sync_status = "Repository Not Found"
+                rows.append((t_name, origin_path_display, hybrid_path_display, origin_status, hybrid_status, sync_status))
+                continue
 
-        # Check uncommitted local changes
-        origin_uncommitted = check_clean_workspace(origin_url)
-        hybrid_uncommitted = check_clean_workspace(hybrid_url)
+            # Check uncommitted local changes
+            origin_uncommitted = check_clean_workspace(origin_url)
+            hybrid_uncommitted = check_clean_workspace(hybrid_url)
 
-        source_last_sync_sha, dest_commit_sha = find_effective_sync_point(origin_url, origin_path, hybrid_url, hybrid_path)
+            source_last_sync_sha, dest_commit_sha = find_effective_sync_point(origin_url, origin_path, hybrid_url, hybrid_path, temp_dirs)
 
-        if not source_last_sync_sha or not dest_commit_sha:
-            origin_status = f"Dirty ({len(origin_uncommitted)})" if origin_uncommitted else "Untracked"
-            hybrid_status = f"Dirty ({len(hybrid_uncommitted)})" if hybrid_uncommitted else "Untracked"
-            sync_status = "Untracked / No Sync History"
-        else:
-            ancestry_ok = check_ancestry_history(origin_url, source_last_sync_sha) and check_ancestry_history(hybrid_url, dest_commit_sha)
-
-            origin_ahead = get_new_commits_count(origin_url, source_last_sync_sha, origin_path)
-            hybrid_ahead = get_new_commits_count(hybrid_url, dest_commit_sha, hybrid_path)
-
-            diverged = origin_ahead > 0 and hybrid_ahead > 0
-
-            # Origin Status string
-            orig_parts = []
-            if origin_ahead > 0:
-                orig_parts.append(f"Ahead ({origin_ahead})")
-            if origin_uncommitted:
-                orig_parts.append(f"Dirty ({len(origin_uncommitted)})" if not origin_ahead else "[Dirty]")
-            origin_status = " ".join(orig_parts) if orig_parts else "Clean"
-
-            # Hybrid Status string
-            hyb_parts = []
-            if hybrid_ahead > 0:
-                hyb_parts.append(f"Ahead ({hybrid_ahead})")
-            if hybrid_uncommitted:
-                hyb_parts.append(f"Dirty ({len(hybrid_uncommitted)})" if not hybrid_ahead else "[Dirty]")
-            hybrid_status = " ".join(hyb_parts) if hyb_parts else "Clean"
-
-            # Sync Status
-            if not ancestry_ok:
-                sync_status = "⚠️ History Rewritten"
-            elif diverged:
-                sync_status = "⚠️ DIVERGED (Conflict)"
-            elif origin_ahead > 0:
-                sync_status = "Ready to Push"
-            elif hybrid_ahead > 0:
-                sync_status = "Ready to Pull"
+            if not source_last_sync_sha or not dest_commit_sha:
+                origin_status = f"Dirty ({len(origin_uncommitted)})" if origin_uncommitted else "Untracked"
+                hybrid_status = f"Dirty ({len(hybrid_uncommitted)})" if hybrid_uncommitted else "Untracked"
+                sync_status = "Untracked / No Sync History"
             else:
-                sync_status = "In Sync"
+                ancestry_ok = check_ancestry_history(origin_url, source_last_sync_sha, temp_dirs) and check_ancestry_history(hybrid_url, dest_commit_sha, temp_dirs)
 
-        rows.append((t_name, origin_path_display, hybrid_path_display, origin_status, hybrid_status, sync_status))
+                origin_ahead = get_new_commits_count(origin_url, source_last_sync_sha, origin_path, temp_dirs)
+                hybrid_ahead = get_new_commits_count(hybrid_url, dest_commit_sha, hybrid_path, temp_dirs)
+
+                diverged = origin_ahead > 0 and hybrid_ahead > 0
+
+                # Origin Status string
+                orig_parts = []
+                if origin_ahead > 0:
+                    orig_parts.append(f"Ahead ({origin_ahead})")
+                if origin_uncommitted:
+                    orig_parts.append(f"Dirty ({len(origin_uncommitted)})" if not origin_ahead else "[Dirty]")
+                origin_status = " ".join(orig_parts) if orig_parts else "Clean"
+
+                # Hybrid Status string
+                hyb_parts = []
+                if hybrid_ahead > 0:
+                    hyb_parts.append(f"Ahead ({hybrid_ahead})")
+                if hybrid_uncommitted:
+                    hyb_parts.append(f"Dirty ({len(hybrid_uncommitted)})" if not hybrid_ahead else "[Dirty]")
+                hybrid_status = " ".join(hyb_parts) if hyb_parts else "Clean"
+
+                # Sync Status
+                if not ancestry_ok:
+                    sync_status = "⚠️ History Rewritten"
+                elif diverged:
+                    sync_status = "⚠️ DIVERGED (Conflict)"
+                elif origin_ahead > 0:
+                    sync_status = "Ready to Push"
+                elif hybrid_ahead > 0:
+                    sync_status = "Ready to Pull"
+                else:
+                    sync_status = "In Sync"
+
+            rows.append((t_name, origin_path_display, hybrid_path_display, origin_status, hybrid_status, sync_status))
+    finally:
+        for t_path in temp_dirs.values():
+            shutil.rmtree(str(t_path), ignore_errors=True)
 
     # Calculate column widths
     min_widths = [15, 15, 15, 15, 15, 20]
