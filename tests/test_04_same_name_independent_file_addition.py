@@ -41,7 +41,7 @@ def main():
         reset_sample_repos(project_root)
 
     syncer_py = project_root / "hybrid-syncer.py"
-    init_push_res = run_cmd(f"python3 {syncer_py} push --init-history", cwd=project_root)
+    init_push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a --init-history", cwd=project_root)
     print_diagnostic("hybrid-syncer.py push --init-history output", init_push_res.stdout)
 
     print_file_tree(origin_dir, "Origin Repo (repo-1)")

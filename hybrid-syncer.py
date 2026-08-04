@@ -665,16 +665,29 @@ def handle_execution(args):
     manifest = load_manifest(args.config)
     targets = manifest.get("targets", {})
 
-    if args.target:
-        if args.target not in targets:
-            available = ", ".join(targets.keys()) or "none"
-            print(f"Error: Target '{args.target}' not found in manifest. Available targets: {available}", file=sys.stderr)
-            sys.exit(1)
-        target_names = [args.target]
-    else:
-        target_names = list(targets.keys())
+    if not args.target:
+        config_path = Path(args.config).resolve()
+        available_targets = list(targets.keys())
+        print(f"Error: Target specification (-t / --target) is mandatory for '{args.command}' command.", file=sys.stderr)
+        print(f"Configuration manifest file: {config_path}", file=sys.stderr)
+        print("Available target(s) in manifest:", file=sys.stderr)
+        if available_targets:
+            for t in available_targets:
+                print(f"  - {t}", file=sys.stderr)
+        else:
+            print("  (No targets defined in manifest)", file=sys.stderr)
+        sample_target = available_targets[0] if available_targets else "<target-name>"
+        print(f"\nSample usage:\n  python hybrid-syncer.py {args.command} -t {sample_target}", file=sys.stderr)
+        sys.exit(1)
 
-    command = args.command  # 'push', 'pull', or 'sync'
+    if args.target not in targets:
+        available = ", ".join(targets.keys()) or "none"
+        print(f"Error: Target '{args.target}' not found in manifest. Available targets: {available}", file=sys.stderr)
+        sys.exit(1)
+
+    target_names = [args.target]
+
+    command = args.command  # 'push' or 'pull'
 
     # Run pre-flight guard checks & collect sync point SHAs
     workflow_last_revs = {}
@@ -689,9 +702,6 @@ def handle_execution(args):
                 dirs_to_check = ["push"]
             elif command == "pull":
                 dirs_to_check = ["pull"]
-            elif command == "sync":
-                strategy = getattr(args, "strategy", "push-first")
-                dirs_to_check = ["push", "pull"] if strategy == "push-first" else ["pull", "push"]
             else:
                 dirs_to_check = []
 
@@ -725,12 +735,6 @@ def handle_execution(args):
             workflows = [f"{t}-push" for t in target_names]
         elif command == "pull":
             workflows = [f"{t}-pull" for t in target_names]
-        elif command == "sync":
-            strategy = getattr(args, "strategy", "push-first")
-            if strategy == "push-first":
-                workflows = [f"{t}-push" for t in target_names] + [f"{t}-pull" for t in target_names]
-            else:  # pull-first
-                workflows = [f"{t}-pull" for t in target_names] + [f"{t}-push" for t in target_names]
 
         sky_content = generate_sky_config(manifest, target_filter=args.target, config_path=str(args.config))
 
@@ -1154,7 +1158,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True, title="subcommands")
 
-    # Reusable flags for execution subcommands (push, pull, sync)
+    # Reusable flags for execution subcommands (push, pull)
     exec_parent = argparse.ArgumentParser(add_help=False)
     exec_parent.add_argument(
         "-t", "--target",
@@ -1192,20 +1196,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sync changes from hybrid repo -> origin repositories"
     )
     pull_parser.set_defaults(func=handle_execution)
-
-    # Subcommand: sync
-    sync_parser = subparsers.add_parser(
-        "sync",
-        parents=[exec_parent],
-        help="Perform bi-directional sync (push followed by pull)"
-    )
-    sync_parser.add_argument(
-        "--strategy",
-        choices=["push-first", "pull-first"],
-        default="push-first",
-        help="Order of sync operations"
-    )
-    sync_parser.set_defaults(func=handle_execution)
 
     # Subcommand: status
     status_parser = subparsers.add_parser(

@@ -25,6 +25,7 @@ TEST_SCENARIOS = [
     ("test_09_unmapped_status_check.py", "Test Scenario 9: Unmapped Path & Orphan Analyzer"),
     ("test_10_exclusion_patterns.py", "Test Scenario 10: Target Exclusion Patterns"),
     ("test_11_trigger_server.py", "Test Scenario 11: Trigger Server Webhooks & Concurrency Mutex"),
+    ("test_12_mandatory_target_and_no_sync.py", "Test Scenario 12: Mandatory Target & Sync Removal"),
 ]
 
 

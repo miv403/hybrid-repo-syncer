@@ -155,6 +155,7 @@ def main():
                 "committer": {"email": "developer@user.com"}
             }
         })
+        time.sleep(0.2)
         print_diagnostic("Normal User Webhook Response", f"Status: {status}, Body: {body}")
         assert status == 200 and body.get("status") == "sync_triggered", f"Unexpected response: {status}, {body}"
 

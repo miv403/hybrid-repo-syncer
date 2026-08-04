@@ -34,7 +34,8 @@ def main():
     if not args.skip_reset:
         reset_sample_repos(project_root)
 
-    run_cmd(f"python3 {syncer_py} push --init-history", cwd=project_root)
+    for target in ["repo-1-a", "repo-1-b", "repo-2-a"]:
+        run_cmd(f"python3 {syncer_py} push -t {target} --init-history", cwd=project_root)
 
     # -------------------------------------------------------------------------
     # STEP 1: BASELINE UNMAPPED CHECK

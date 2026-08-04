@@ -8,7 +8,7 @@
 
 - **YAML-driven Configuration**: Manage repository mapping targets in a clean `sync-manifest.yaml`.
 - **Automatic Starlark Generation**: Dynamically renders `copy.bara.sky` files with `core.workflow()`, `core.move()` transformations, and path `glob()` matching.
-- **Bi-Directional Synchronization**: Supports origin → hybrid (`push`), hybrid → origin (`pull`), and sequential bi-directional (`sync`).
+- **Manual Transfer Commands**: Supports explicit origin → hybrid (`push`) and hybrid → origin (`pull`) transfer per target mapping (`-t / --target`).
 - **Detailed Repository Status (`status`)**: Multi-column tabular status reporting commit ahead/behind counts, uncommitted local changes (`Dirty`), divergence warnings (`⚠️ DIVERGED`), and unmapped path analysis (`--check-unmapped`).
 - **Manifest Doctor & Detector (`doctor` / `detector`)**: Manifest health detector scanning for exact target path clashes, nested prefix overlaps, and missing repository paths on disk.
 - **Target Path Exclusion (`exclude`)**: Exclude specific file globs (e.g. `**/*.tmp`, `.github/**`) per origin, hybrid, or target mapping.
@@ -127,34 +127,25 @@ Generates and prints or exports the Copybara Starlark (`copy.bara.sky`) configur
 - `-t, --target NAME`: Generate configuration only for a specific target mapping name.
 
 #### 3. `push`
-Executes origin → hybrid workflows (`<target>-push`).
+Executes origin → hybrid workflows (`<target>-push`). **Note:** Target specification (`-t / --target`) is **mandatory**.
 
 ```bash
-./hybrid-syncer.py push [-t/--target NAME] [-n/--dry-run] [--init-history] [--skip-guards]
+./hybrid-syncer.py push -t/--target NAME [-n/--dry-run] [--init-history] [--skip-guards]
 ```
-- `-t, --target NAME`: Run sync only for a specific target mapping.
+- `-t, --target NAME` *(required)*: Specific target mapping name to push (e.g., `repo-1-a`).
 - `-n, --dry-run`: Pass `--dry-run` to Copybara without modifying destination remotes.
 - `--init-history`: Pass `--init-history` to Copybara (required during the first migration run for any workflow).
 - `--skip-guards`: Skip pre-flight safety circuit breaker guard checks.
 
 #### 4. `pull`
-Executes hybrid → origin workflows (`<target>-pull`).
+Executes hybrid → origin workflows (`<target>-pull`). **Note:** Target specification (`-t / --target`) is **mandatory**.
 
 ```bash
-./hybrid-syncer.py pull [-t/--target NAME] [-n/--dry-run] [--init-history] [--skip-guards]
+./hybrid-syncer.py pull -t/--target NAME [-n/--dry-run] [--init-history] [--skip-guards]
 ```
-- `-t, --target NAME`: Run pull only for a specific target mapping.
+- `-t, --target NAME` *(required)*: Specific target mapping name to pull (e.g., `repo-1-a`).
 - `-n, --dry-run`: Pass `--dry-run` to Copybara.
 - `--init-history`: Pass `--init-history` to Copybara for first-time pull migration setups.
-- `--skip-guards`: Skip pre-flight safety circuit breaker guard checks.
-
-#### 5. `sync`
-Performs sequential bi-directional sync (push and pull).
-
-```bash
-./hybrid-syncer.py sync [-t/--target NAME] [-n/--dry-run] [--init-history] [--strategy {push-first|pull-first}] [--skip-guards]
-```
-- `--strategy {push-first|pull-first}`: Execution order of sync operations (default: `push-first`).
 - `--skip-guards`: Skip pre-flight safety circuit breaker guard checks.
 
 #### 6. `status`
@@ -216,17 +207,17 @@ Runs a manifest health check to detect exact target path clashes, nested prefix 
 **Goal**: Validate workflow execution without modifying git remotes.
 
 ```bash
-./hybrid-syncer.py -v push -n --init-history
+./hybrid-syncer.py -v push -t repo-1-a -n --init-history
 ```
-**Expected Outcome**: Copybara runs all push workflows in dry-run mode, executing transformations locally without pushing commits to the hybrid remote.
+**Expected Outcome**: Copybara runs the push workflow for target `repo-1-a` in dry-run mode, executing transformations locally without pushing commits to the hybrid remote.
 
 ---
 
 ### Test Case 4: Initial Origin → Hybrid Migration (`push`)
-**Goal**: Sync directory contents from origin repositories into the hybrid repository.
+**Goal**: Sync directory contents from origin repositories into the hybrid repository for target `repo-1-a`.
 
 ```bash
-./hybrid-syncer.py -v push --init-history
+./hybrid-syncer.py -v push -t repo-1-a --init-history
 ```
 **Expected Outcome**: Files from `sample-repos/repo-1` (folders `a` and `b`) and `sample-repos/repo-2` (folder `a`) are synced into `sample-repos/hybrid/repo-1/` and `sample-repos/hybrid/repo-2/`.
 

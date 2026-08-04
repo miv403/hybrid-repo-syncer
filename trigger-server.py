@@ -44,17 +44,37 @@ def get_syncer_emails() -> set[str]:
 def execute_sync():
     print("[TRIGGER] Starting hybrid-syncer process in background...")
     try:
-        res = subprocess.run(
-            ["python3", "/app/hybrid-syncer.py", "-v", "sync"],
-            capture_output=True,
-            text=True
-        )
-        if res.stdout:
-            print(res.stdout)
-        if res.returncode != 0:
-            print(f"[ERROR] Sync failed:\n{res.stderr}", file=sys.stderr)
-        else:
-            print("[TRIGGER] Hybrid sync completed successfully.")
+        manifest_paths = [Path("/app/sync-manifest.yaml"), Path("sync-manifest.yaml")]
+        targets = []
+        for mp in manifest_paths:
+            if mp.exists():
+                try:
+                    with open(mp, "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f) or {}
+                        t_data = data.get("targets", {})
+                        if isinstance(t_data, dict):
+                            targets = list(t_data.keys())
+                            break
+                except Exception:
+                    pass
+
+        syncer_py = "/app/hybrid-syncer.py" if Path("/app/hybrid-syncer.py").exists() else "hybrid-syncer.py"
+        if not targets:
+            print("[ERROR] No targets found to sync.", file=sys.stderr)
+            return
+
+        for target in targets:
+            res = subprocess.run(
+                ["python3", syncer_py, "-v", "push", "-t", target],
+                capture_output=True,
+                text=True
+            )
+            if res.stdout:
+                print(res.stdout)
+            if res.returncode != 0:
+                print(f"[ERROR] Push for target '{target}' failed:\n{res.stderr}", file=sys.stderr)
+            else:
+                print(f"[TRIGGER] Hybrid push for target '{target}' completed successfully.")
     finally:
         sync_lock.release()
 

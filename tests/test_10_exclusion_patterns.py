@@ -106,7 +106,7 @@ targets:
             "Run `push` with exclusion manifest to sync target `repo-1-a`."
         )
 
-        push_res = run_cmd(f"python3 {syncer_py} -c {manifest_path} push --init-history --skip-guards", cwd=project_root)
+        push_res = run_cmd(f"python3 {syncer_py} -c {manifest_path} push -t repo-1-a --init-history --skip-guards", cwd=project_root)
         print_diagnostic("Push Migration Output", push_res.stdout)
 
         print_file_tree(hybrid_dir, "Hybrid Repo (after push with exclusions)")
