@@ -91,14 +91,12 @@ def handle_execution(args, repo_cache=None):
     base_dir = Path(args.config).parent.resolve()
     default_hybrid_url = manifest.get("hybrid_repo", "./hybrid")
 
-    temp_dirs = repo_cache if isinstance(repo_cache, dict) else (repo_cache.temp_dirs if repo_cache else None)
-
     for target_name in target_names:
         t_cfg = targets[target_name]
         dirs_to_check = [command] if command in ("push", "pull") else []
 
         for direction in dirs_to_check:
-            run_preflight_guards(target_name, direction, t_cfg, manifest, str(args.config), args, temp_dirs)
+            run_preflight_guards(target_name, direction, t_cfg, manifest, str(args.config), args, repo_cache)
 
             # Resolve effective last synced SHA for Copybara
             origin_cfg = t_cfg.get("origin", {})
@@ -114,8 +112,8 @@ def handle_execution(args, repo_cache=None):
             else:
                 src_url, src_path, dst_url, dst_path = hybrid_url, hybrid_path, origin_url, origin_path
 
-            last_sync_sha, _ = find_effective_sync_point(src_url, src_path, dst_url, dst_path, temp_dirs)
-            dest_has_revid, _ = find_last_sync_info(dst_url, dst_path, temp_dirs)
+            last_sync_sha, _ = find_effective_sync_point(src_url, src_path, dst_url, dst_path, repo_cache)
+            dest_has_revid, _ = find_last_sync_info(dst_url, dst_path, repo_cache)
             if last_sync_sha and not dest_has_revid:
                 workflow_last_revs[f"{target_name}-{direction}"] = last_sync_sha
 
@@ -159,8 +157,6 @@ def handle_status(args, repo_cache=None):
     headers = ["Target", "Origin Path", "Hybrid Path", "Origin Status", "Hybrid Status", "Sync Status"]
     rows = []
 
-    temp_dirs = repo_cache if isinstance(repo_cache, dict) else (repo_cache.temp_dirs if repo_cache else None)
-
     for t_name, t_cfg in targets_to_check.items():
         origin_cfg = t_cfg.get("origin", {})
         hybrid_cfg = t_cfg.get("hybrid", {})
@@ -188,17 +184,17 @@ def handle_status(args, repo_cache=None):
         origin_uncommitted = check_clean_workspace(origin_url)
         hybrid_uncommitted = check_clean_workspace(hybrid_url)
 
-        source_last_sync_sha, dest_commit_sha = find_effective_sync_point(origin_url, origin_path, hybrid_url, hybrid_path, temp_dirs)
+        source_last_sync_sha, dest_commit_sha = find_effective_sync_point(origin_url, origin_path, hybrid_url, hybrid_path, repo_cache)
 
         if not source_last_sync_sha or not dest_commit_sha:
             origin_status = f"Dirty ({len(origin_uncommitted)})" if origin_uncommitted else "Untracked"
             hybrid_status = f"Dirty ({len(hybrid_uncommitted)})" if hybrid_uncommitted else "Untracked"
             sync_status = "Untracked / No Sync History"
         else:
-            ancestry_ok = check_ancestry_history(origin_url, source_last_sync_sha, temp_dirs) and check_ancestry_history(hybrid_url, dest_commit_sha, temp_dirs)
+            ancestry_ok = check_ancestry_history(origin_url, source_last_sync_sha, repo_cache) and check_ancestry_history(hybrid_url, dest_commit_sha, repo_cache)
 
-            origin_ahead = get_new_commits_count(origin_url, source_last_sync_sha, origin_path, temp_dirs)
-            hybrid_ahead = get_new_commits_count(hybrid_url, dest_commit_sha, hybrid_path, temp_dirs)
+            origin_ahead = get_new_commits_count(origin_url, source_last_sync_sha, origin_path, repo_cache)
+            hybrid_ahead = get_new_commits_count(hybrid_url, dest_commit_sha, hybrid_path, repo_cache)
 
             diverged = origin_ahead > 0 and hybrid_ahead > 0
 

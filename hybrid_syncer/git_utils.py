@@ -8,7 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hybrid_syncer.temp_manager import get_repo_path
+from hybrid_syncer.errors import ManifestError, RepoAccessError
+from hybrid_syncer.temp_manager import TempRepoCache, get_repo_path
 
 
 def run_git(args: list, cwd=None) -> tuple[int, str, str]:
@@ -127,7 +128,7 @@ def _extract_sync_info_from_dir(repo_dir: Path, dest_path: str = "") -> tuple[st
     return None, None
 
 
-def find_last_sync_info(dest_repo_url: str, dest_path: str = "", temp_dirs: dict | None = None) -> tuple[str | None, str | None]:
+def find_last_sync_info(dest_repo_url: str, dest_path: str = "", repo_cache: TempRepoCache | dict | None = None) -> tuple[str | None, str | None]:
     """
     Searches dest_repo commit log for the last Copybara sync commit containing GitOrigin-RevId.
     Supports both local file paths and remote HTTP/HTTPS URLs.
@@ -136,60 +137,63 @@ def find_last_sync_info(dest_repo_url: str, dest_path: str = "", temp_dirs: dict
     if not dest_repo_url:
         return None, None
 
-    repo_dir, is_temp = get_repo_path(dest_repo_url, temp_dirs)
-    if not repo_dir:
-        return None, None
-
-    try:
+    cache = repo_cache if isinstance(repo_cache, TempRepoCache) else TempRepoCache(temp_dirs=repo_cache if isinstance(repo_cache, dict) else None)
+    with cache:
+        try:
+            repo_dir = cache.get_repo_path(dest_repo_url)
+        except (ManifestError, RepoAccessError):
+            return None, None
         return _extract_sync_info_from_dir(repo_dir, dest_path)
-    finally:
-        if is_temp and temp_dirs is None:
-            shutil.rmtree(str(repo_dir), ignore_errors=True)
 
 
-def find_effective_sync_point(source_url: str, source_path: str, dest_url: str, dest_path: str, temp_dirs: dict | None = None) -> tuple[str | None, str | None]:
+def find_effective_sync_point(source_url: str, source_path: str, dest_url: str, dest_path: str, repo_cache: TempRepoCache | dict | None = None) -> tuple[str | None, str | None]:
     """
     Finds the most recent sync point (source_last_sync_sha, dest_last_sync_sha) between source and dest repositories.
     Checks GitOrigin-RevId in both dest log (push) and source log (pull) to find the newest sync point.
     Returns (source_sync_sha, dest_sync_sha) or (None, None).
     """
-    dest_commit_sha1, source_rev_id1 = find_last_sync_info(dest_url, dest_path, temp_dirs)
-    source_commit_sha2, dest_rev_id2 = find_last_sync_info(source_url, source_path, temp_dirs)
+    cache = repo_cache if isinstance(repo_cache, TempRepoCache) else TempRepoCache(temp_dirs=repo_cache if isinstance(repo_cache, dict) else None)
+    with cache:
+        dest_commit_sha1, source_rev_id1 = find_last_sync_info(dest_url, dest_path, cache)
+        source_commit_sha2, dest_rev_id2 = find_last_sync_info(source_url, source_path, cache)
 
-    if not (dest_commit_sha1 and source_rev_id1) and not (source_commit_sha2 and dest_rev_id2):
-        return None, None
+        if not (dest_commit_sha1 and source_rev_id1) and not (source_commit_sha2 and dest_rev_id2):
+            return None, None
 
-    if (dest_commit_sha1 and source_rev_id1) and not (source_commit_sha2 and dest_rev_id2):
-        return source_rev_id1, dest_commit_sha1
+        if (dest_commit_sha1 and source_rev_id1) and not (source_commit_sha2 and dest_rev_id2):
+            return source_rev_id1, dest_commit_sha1
 
-    if not (dest_commit_sha1 and source_rev_id1) and (source_commit_sha2 and dest_rev_id2):
-        return source_commit_sha2, dest_rev_id2
+        if not (dest_commit_sha1 and source_rev_id1) and (source_commit_sha2 and dest_rev_id2):
+            return source_commit_sha2, dest_rev_id2
 
-    # Compare which sync point is newer in source repository history
-    source_dir, is_temp = get_repo_path(source_url, temp_dirs)
-    if source_dir:
+        # Compare which sync point is newer in source repository history
         try:
+            source_dir = cache.get_repo_path(source_url)
             rc, _, _ = run_git(["-C", str(source_dir), "merge-base", "--is-ancestor", source_rev_id1, source_commit_sha2])
             if rc == 0:
                 return source_commit_sha2, dest_rev_id2
-        finally:
-            if is_temp and temp_dirs is None:
-                shutil.rmtree(str(source_dir), ignore_errors=True)
+        except (ManifestError, RepoAccessError):
+            pass
 
-    return source_rev_id1, dest_commit_sha1
+        return source_rev_id1, dest_commit_sha1
 
 
-def check_ancestry_history(source_repo_url: str, last_sync_source_sha: str, temp_dirs: dict | None = None) -> bool:
+def check_ancestry_history(source_repo_url: str, last_sync_source_sha: str, repo_cache: TempRepoCache | dict | None = None) -> bool:
     """
     Checks if last_sync_source_sha is still an ancestor of HEAD in source_repo.
     Returns False if history was rewritten / rebased / force-pushed.
     Supports both local file paths and remote HTTP/HTTPS URLs.
     """
-    source_dir, is_temp = get_repo_path(source_repo_url, temp_dirs)
-    if not source_dir:
+    if not source_repo_url:
         return True
 
-    try:
+    cache = repo_cache if isinstance(repo_cache, TempRepoCache) else TempRepoCache(temp_dirs=repo_cache if isinstance(repo_cache, dict) else None)
+    with cache:
+        try:
+            source_dir = cache.get_repo_path(source_repo_url)
+        except (ManifestError, RepoAccessError):
+            return True
+
         # Check commit existence
         rc, _, _ = run_git(["-C", str(source_dir), "cat-file", "-e", f"{last_sync_source_sha}^{{commit}}"])
         if rc != 0:
@@ -197,17 +201,19 @@ def check_ancestry_history(source_repo_url: str, last_sync_source_sha: str, temp
 
         rc, _, _ = run_git(["-C", str(source_dir), "merge-base", "--is-ancestor", last_sync_source_sha, "HEAD"])
         return rc == 0
-    finally:
-        if is_temp and temp_dirs is None:
-            shutil.rmtree(str(source_dir), ignore_errors=True)
 
 
-def get_new_commits_count(repo_url: str, from_sha: str, path_filter: str = "", temp_dirs: dict | None = None) -> int:
-    repo_dir, is_temp = get_repo_path(repo_url, temp_dirs)
-    if not repo_dir:
+def get_new_commits_count(repo_url: str, from_sha: str, path_filter: str = "", repo_cache: TempRepoCache | dict | None = None) -> int:
+    if not repo_url:
         return 0
 
-    try:
+    cache = repo_cache if isinstance(repo_cache, TempRepoCache) else TempRepoCache(temp_dirs=repo_cache if isinstance(repo_cache, dict) else None)
+    with cache:
+        try:
+            repo_dir = cache.get_repo_path(repo_url)
+        except (ManifestError, RepoAccessError):
+            return 0
+
         cmd = ["-C", str(repo_dir), "rev-list", f"{from_sha}..HEAD"]
         if path_filter:
             cmd.extend(["--", path_filter])
@@ -216,30 +222,33 @@ def get_new_commits_count(repo_url: str, from_sha: str, path_filter: str = "", t
         if rc == 0 and out.strip():
             return len([line for line in out.strip().splitlines() if line.strip()])
         return 0
-    finally:
-        if is_temp and temp_dirs is None:
-            shutil.rmtree(str(repo_dir), ignore_errors=True)
 
 
 def check_divergence(source_repo_url: str, source_path: str, last_sync_source_sha: str,
                      dest_repo_url: str, dest_path: str, dest_sync_commit_sha: str,
-                     temp_dirs: dict | None = None) -> tuple[bool, bool, bool]:
-    source_new = get_new_commits_count(source_repo_url, last_sync_source_sha, source_path, temp_dirs) > 0
-    dest_new = get_new_commits_count(dest_repo_url, dest_sync_commit_sha, dest_path, temp_dirs) > 0
-    diverged = source_new and dest_new
-    return diverged, source_new, dest_new
+                     repo_cache: TempRepoCache | dict | None = None) -> tuple[bool, bool, bool]:
+    cache = repo_cache if isinstance(repo_cache, TempRepoCache) else TempRepoCache(temp_dirs=repo_cache if isinstance(repo_cache, dict) else None)
+    with cache:
+        source_new = get_new_commits_count(source_repo_url, last_sync_source_sha, source_path, cache) > 0
+        dest_new = get_new_commits_count(dest_repo_url, dest_sync_commit_sha, dest_path, cache) > 0
+        diverged = source_new and dest_new
+        return diverged, source_new, dest_new
 
 
 def check_pre_apply_patch(source_repo_url: str, source_path: str, last_sync_source_sha: str,
                           dest_repo_url: str, dest_path: str,
-                          temp_dirs: dict | None = None) -> tuple[bool, str]:
-    source_dir, src_is_temp = get_repo_path(source_repo_url, temp_dirs)
-    dest_dir, dst_is_temp = get_repo_path(dest_repo_url, temp_dirs)
+                          repo_cache: TempRepoCache | dict | None = None) -> tuple[bool, str]:
+    cache = repo_cache if isinstance(repo_cache, TempRepoCache) else TempRepoCache(temp_dirs=repo_cache if isinstance(repo_cache, dict) else None)
+    with cache:
+        try:
+            source_dir = cache.get_repo_path(source_repo_url)
+            dest_dir = cache.get_repo_path(dest_repo_url)
+        except (ManifestError, RepoAccessError):
+            return True, ""
 
-    if not source_dir or not dest_dir:
-        return True, ""
+        if not source_dir or not dest_dir:
+            return True, ""
 
-    try:
         dest_path_obj = dest_dir
         if str(dest_path_obj).endswith(".git"):
             sibling_working_dir = Path(str(dest_path_obj)[:-4])
@@ -290,11 +299,6 @@ def check_pre_apply_patch(source_repo_url: str, source_path: str, last_sync_sour
             return False, str(e)
 
         return True, ""
-    finally:
-        if src_is_temp and temp_dirs is None and source_dir:
-            shutil.rmtree(str(source_dir), ignore_errors=True)
-        if dst_is_temp and temp_dirs is None and dest_dir:
-            shutil.rmtree(str(dest_dir), ignore_errors=True)
 
 
 def is_file_mapped(file_path: str, mapped_paths: set[str]) -> bool:

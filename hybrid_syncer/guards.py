@@ -22,7 +22,10 @@ from hybrid_syncer.git_utils import (
 )
 
 
-def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, manifest: dict, config_path: str, args, temp_dirs: dict | None = None) -> bool:
+from hybrid_syncer.temp_manager import TempRepoCache
+
+
+def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, manifest: dict, config_path: str, args, repo_cache: TempRepoCache | dict | None = None) -> bool:
     if getattr(args, "skip_guards", False):
         if args.verbose:
             print(f"[VERBOSE] Guard checks explicitly skipped via --skip-guards for {target_name} ({direction})", file=sys.stderr)
@@ -56,7 +59,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
         if uncommitted:
             raise DirtyWorkspaceError(target_name, direction, r_label, r_url, uncommitted)
 
-    source_last_sync_sha, dest_commit_sha = find_effective_sync_point(source_url, source_path, dest_url, dest_path, temp_dirs)
+    source_last_sync_sha, dest_commit_sha = find_effective_sync_point(source_url, source_path, dest_url, dest_path, repo_cache)
 
     if not source_last_sync_sha or not dest_commit_sha:
         if args.verbose:
@@ -64,7 +67,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
         return True
 
     # --- Guard Check 1: Ancestry & History Check ---
-    is_ancestor = check_ancestry_history(source_url, source_last_sync_sha, temp_dirs)
+    is_ancestor = check_ancestry_history(source_url, source_last_sync_sha, repo_cache)
     if not is_ancestor:
         raise AncestryRewrittenError(target_name, direction, source_name, source_url, source_last_sync_sha)
 
@@ -72,7 +75,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
     diverged, source_new, dest_new = check_divergence(
         source_url, source_path, source_last_sync_sha,
         dest_url, dest_path, dest_commit_sha,
-        temp_dirs
+        repo_cache
     )
     if diverged:
         raise DivergenceError(target_name, direction, source_name, source_path, dest_name, dest_path, source_last_sync_sha)
@@ -82,7 +85,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
         patch_ok, patch_err = check_pre_apply_patch(
             source_url, source_path, source_last_sync_sha,
             dest_url, dest_path,
-            temp_dirs
+            repo_cache
         )
         if not patch_ok:
             raise PatchApplyError(target_name, direction, source_name, dest_name, patch_err)
