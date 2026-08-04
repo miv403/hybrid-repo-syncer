@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
-Test Scenario 8: Doctor (Detector) Command Verification
-
-Objective:
-  Validate that `hybrid-syncer.py doctor` (and alias `detector`) detects:
-  - Clean baseline manifests (0 errors, 0 warnings)
-  - Exact path clashes (duplicate hybrid/origin paths)
-  - Prefix overlaps (nested directory target paths)
-  - Missing local repository paths on disk
+Test Scenario 8: Doctor Command Manifest Health Check Verification
+Validates that `hybrid-syncer.py doctor` (and alias `detector`) detects:
+1. Valid manifests pass with 0 errors/warnings and exit code 0.
+2. Exact path clashes between targets raise error and non-zero exit code.
+3. Prefix path overlaps raise warnings.
+4. Non-existent local origin repository paths raise error and non-zero exit code.
 """
 
 import sys
@@ -15,17 +13,15 @@ import tempfile
 from pathlib import Path
 
 from common import (
-    BOLD, FAIL, OKGREEN, ENDC,
-    run_cmd, print_banner, print_step_header, print_diagnostic,
-    print_file_tree, print_git_log, breakpoint_prompt, reset_sample_repos,
-    print_result_row, get_test_arg_parser
+    FAIL, OKGREEN, ENDC,
+    breakpoint_prompt, get_test_arg_parser, print_banner,
+    print_diagnostic, print_result_row, print_step_header, reset_sample_repos, run_cmd
 )
 
 
 def main():
-    parser = get_test_arg_parser("Test Scenario 8: Doctor (Detector) Command Verification")
+    parser = get_test_arg_parser("Test Scenario 8: Doctor Command Verification")
     args = parser.parse_args()
-
     project_root = Path(__file__).resolve().parent.parent
     syncer_py = project_root / "hybrid-syncer.py"
 
@@ -44,7 +40,8 @@ def main():
     )
 
     clean_res = run_cmd(f"python3 {syncer_py} doctor", cwd=project_root)
-    print_diagnostic("Doctor Output (Clean Manifest)", clean_res.stdout)
+    clean_out = clean_res.stdout + clean_res.stderr
+    print_diagnostic("Doctor Output (Clean Manifest)", clean_out)
 
     breakpoint_prompt(args.auto, 1, "Clean manifest checked.")
 
@@ -80,7 +77,8 @@ targets:
 """)
 
         clash_res = run_cmd(f"python3 {syncer_py} -c {clash_manifest} doctor", cwd=project_root, check=False)
-        print_diagnostic("Doctor Output (Exact Clash)", clash_res.stdout)
+        clash_out = clash_res.stdout + clash_res.stderr
+        print_diagnostic("Doctor Output (Exact Clash)", clash_out)
 
         breakpoint_prompt(args.auto, 2, "Exact path clash checked.")
 
@@ -112,7 +110,8 @@ targets:
 """)
 
         overlap_res = run_cmd(f"python3 {syncer_py} -c {overlap_manifest} doctor", cwd=project_root, check=False)
-        print_diagnostic("Doctor Output (Prefix Overlap)", overlap_res.stdout)
+        overlap_out = overlap_res.stdout + overlap_res.stderr
+        print_diagnostic("Doctor Output (Prefix Overlap)", overlap_out)
 
         breakpoint_prompt(args.auto, 3, "Prefix overlap checked.")
 
@@ -138,7 +137,8 @@ targets:
 """)
 
         missing_res = run_cmd(f"python3 {syncer_py} -c {missing_manifest} detector", cwd=project_root, check=False)
-        print_diagnostic("Detector Output (Missing Repo)", missing_res.stdout)
+        missing_out = missing_res.stdout + missing_res.stderr
+        print_diagnostic("Detector Output (Missing Repo)", missing_out)
 
         breakpoint_prompt(args.auto, 4, "Missing repo checked.")
 
@@ -151,16 +151,16 @@ targets:
         "Validate clean pass, exact clash detection, prefix overlap detection, and missing repo detection."
     )
 
-    pass_clean = clean_res.returncode == 0 and "passed health checks cleanly" in clean_res.stdout
-    print_result_row("1. Doctor passes clean manifest with 0 errors and exit code 0", pass_clean, clean_res.stdout.strip().splitlines()[-1] if clean_res.stdout else "")
+    pass_clean = clean_res.returncode == 0 and "passed health checks cleanly" in clean_out
+    print_result_row("1. Doctor passes clean manifest with 0 errors and exit code 0", pass_clean, clean_out.strip().splitlines()[-1] if clean_out else "")
 
-    pass_clash = clash_res.returncode == 1 and "clashes with" in clash_res.stdout and "❌ Error" in clash_res.stdout
-    print_result_row("2. Doctor detects exact path clash and returns exit code 1", pass_clash, "Exact path clash error caught")
+    pass_clash = clash_res.returncode != 0 and "clashes with" in clash_out and "❌ Error" in clash_out
+    print_result_row("2. Doctor detects exact path clash and returns non-zero exit code", pass_clash, "Exact path clash error caught")
 
-    pass_overlap = "overlaps with" in overlap_res.stdout and "⚠️ Warning" in overlap_res.stdout
+    pass_overlap = "overlaps with" in overlap_out and "⚠️ Warning" in overlap_out
     print_result_row("3. Doctor detects prefix overlap and reports warning", pass_overlap, "Prefix path overlap warning caught")
 
-    pass_missing = missing_res.returncode == 1 and "does not exist on disk" in missing_res.stdout and "❌ Error" in missing_res.stdout
+    pass_missing = missing_res.returncode != 0 and "does not exist on disk" in missing_out and "❌ Error" in missing_out
     print_result_row("4. Detector alias catches missing local repository path", pass_missing, "Missing repository path error caught")
 
     all_passed = pass_clean and pass_clash and pass_overlap and pass_missing

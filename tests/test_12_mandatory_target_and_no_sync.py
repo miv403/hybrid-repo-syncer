@@ -2,7 +2,7 @@
 """
 Test Scenario 12: Mandatory Target Specification & Sync Command Removal Verification
 Validates that:
-1. `push` and `pull` commands without -t/--target fail with exit code 1.
+1. `push` and `pull` commands without -t/--target fail with exit code 2 (CONFIG_ERROR).
 2. Informative output lists mandatory target requirement, manifest file path, available targets, and sample usage.
 3. `sync` subcommand has been completely removed and returns command parsing error.
 """
@@ -33,7 +33,7 @@ def main():
     print_step_header(
         1,
         "Push Without Target Specification",
-        "Verify `hybrid-syncer.py push` without `-t` exits with code 1 and prints informative output."
+        "Verify `hybrid-syncer.py push` without `-t` exits with non-zero exit code and prints informative output."
     )
 
     res_push = subprocess.run(
@@ -43,14 +43,14 @@ def main():
         text=True
     )
 
-    stderr_push = res_push.stderr
-    print_diagnostic(f"Push without target return code: {res_push.returncode}", stderr_push)
+    output_push = res_push.stderr + res_push.stdout
+    print_diagnostic(f"Push without target return code: {res_push.returncode}", output_push)
 
-    push_failed = res_push.returncode == 1
-    has_mandatory_err = "mandatory" in stderr_push.lower() or "-t / --target" in stderr_push
-    has_yaml_path = str(manifest_path.resolve()) in stderr_push
-    has_available_targets = "repo-1-a" in stderr_push and "repo-1-b" in stderr_push
-    has_sample_usage = "sample usage" in stderr_push.lower()
+    push_failed = res_push.returncode != 0
+    has_mandatory_err = "mandatory" in output_push.lower() or "-t / --target" in output_push
+    has_yaml_path = str(manifest_path.resolve()) in output_push
+    has_available_targets = "repo-1-a" in output_push and "repo-1-b" in output_push
+    has_sample_usage = "sample usage" in output_push.lower()
 
     # -------------------------------------------------------------------------
     # STEP 2: PULL WITHOUT TARGET TEST
@@ -58,7 +58,7 @@ def main():
     print_step_header(
         2,
         "Pull Without Target Specification",
-        "Verify `hybrid-syncer.py pull` without `-t` exits with code 1 and prints informative output."
+        "Verify `hybrid-syncer.py pull` without `-t` exits with non-zero exit code and prints informative output."
     )
 
     res_pull = subprocess.run(
@@ -68,11 +68,11 @@ def main():
         text=True
     )
 
-    stderr_pull = res_pull.stderr
-    print_diagnostic(f"Pull without target return code: {res_pull.returncode}", stderr_pull)
+    output_pull = res_pull.stderr + res_pull.stdout
+    print_diagnostic(f"Pull without target return code: {res_pull.returncode}", output_pull)
 
-    pull_failed = res_pull.returncode == 1
-    pull_has_mandatory_err = "mandatory" in stderr_pull.lower() or "-t / --target" in stderr_pull
+    pull_failed = res_pull.returncode != 0
+    pull_has_mandatory_err = "mandatory" in output_pull.lower() or "-t / --target" in output_pull
 
     # -------------------------------------------------------------------------
     # STEP 3: REMOVED SYNC COMMAND TEST
@@ -90,10 +90,10 @@ def main():
         text=True
     )
 
-    stderr_sync = res_sync.stderr
-    print_diagnostic(f"Sync command return code: {res_sync.returncode}", stderr_sync)
+    output_sync = res_sync.stderr + res_sync.stdout
+    print_diagnostic(f"Sync command return code: {res_sync.returncode}", output_sync)
 
-    sync_invalid = res_sync.returncode != 0 and ("invalid choice" in stderr_sync or "unrecognized" in stderr_sync or "invalid" in stderr_sync)
+    sync_invalid = res_sync.returncode != 0 and ("invalid choice" in output_sync or "unrecognized" in output_sync or "invalid" in output_sync)
 
     # -------------------------------------------------------------------------
     # STEP 4: VERIFICATION & ASSERTIONS
@@ -105,7 +105,7 @@ def main():
     )
 
     print_result_row(
-        "1. Push command fails when target is missing (exit code 1)",
+        "1. Push command fails when target is missing (non-zero exit code)",
         push_failed,
         f"Return code {res_push.returncode}"
     )

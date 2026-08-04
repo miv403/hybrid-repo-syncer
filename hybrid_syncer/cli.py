@@ -3,7 +3,6 @@ Argparse configuration and CLI entrypoint handlers for hybrid-syncer.
 """
 
 import argparse
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -16,6 +15,7 @@ from hybrid_syncer.config import (
     load_manifest,
 )
 from hybrid_syncer.copybara import run_workflows
+from hybrid_syncer.errors import ExitCode, ManifestError, RED, RESET, SyncerError
 from hybrid_syncer.git_utils import (
     check_ancestry_history,
     check_clean_workspace,
@@ -30,26 +30,24 @@ from hybrid_syncer.git_utils import (
     run_git,
 )
 from hybrid_syncer.guards import run_preflight_guards
-from hybrid_syncer.temp_manager import TempRepoManager
+from hybrid_syncer.temp_manager import TempRepoCache
 
 
-def handle_init(args):
+def handle_init(args, repo_cache=None):
     config_path = args.config
     if config_path.exists() and not args.force:
-        print(f"Error: File '{config_path}' already exists. Use -f / --force to overwrite.", file=sys.stderr)
-        sys.exit(1)
+        raise ManifestError(f"File '{config_path}' already exists. Use -f / --force to overwrite.")
 
     try:
         if config_path.parent:
             config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(STARTER_MANIFEST, encoding="utf-8")
-        print(f"Initialized starter sync manifest at: {config_path}")
-    except Exception as e:
-        print(f"Error writing manifest to '{config_path}': {e}", file=sys.stderr)
-        sys.exit(1)
+        print(f"Initialized starter sync manifest at: {config_path}", file=sys.stderr)
+    except OSError as e:
+        raise ManifestError(f"Error writing manifest to '{config_path}': {e}")
 
 
-def handle_generate(args):
+def handle_generate(args, repo_cache=None):
     manifest = load_manifest(args.config)
     sky_content = generate_sky_config(manifest, target_filter=args.target, config_path=str(args.config))
 
@@ -58,123 +56,51 @@ def handle_generate(args):
             if args.output.parent:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(sky_content, encoding="utf-8")
-            print(f"Generated Starlark configuration written to: {args.output}")
-        except Exception as e:
-            print(f"Error writing output to '{args.output}': {e}", file=sys.stderr)
-            sys.exit(1)
+            print(f"Generated Starlark configuration written to: {args.output}", file=sys.stderr)
+        except OSError as e:
+            raise ManifestError(f"Error writing output to '{args.output}': {e}")
     else:
-        print(sky_content)
+        sys.stdout.write(sky_content + "\n")
 
 
-def handle_execution(args):
+def handle_execution(args, repo_cache=None):
     manifest = load_manifest(args.config)
     targets = manifest.get("targets", {})
 
     if not args.target:
         config_path = Path(args.config).resolve()
         available_targets = list(targets.keys())
-        print(f"Error: Target specification (-t / --target) is mandatory for '{args.command}' command.", file=sys.stderr)
-        print(f"Configuration manifest file: {config_path}", file=sys.stderr)
-        print("Available target(s) in manifest:", file=sys.stderr)
-        if available_targets:
-            for t in available_targets:
-                print(f"  - {t}", file=sys.stderr)
-        else:
-            print("  (No targets defined in manifest)", file=sys.stderr)
+        available_str = "\n".join(f"  - {t}" for t in available_targets) if available_targets else "  (No targets defined in manifest)"
         sample_target = available_targets[0] if available_targets else "<target-name>"
-        print(f"\nSample usage:\n  python hybrid-syncer.py {args.command} -t {sample_target}", file=sys.stderr)
-        sys.exit(1)
+        msg = (
+            f"Target specification (-t / --target) is mandatory for '{args.command}' command.\n"
+            f"Configuration manifest file: {config_path}\n"
+            f"Available target(s) in manifest:\n{available_str}\n\n"
+            f"Sample usage:\n  python hybrid-syncer.py {args.command} -t {sample_target}"
+        )
+        raise ManifestError(msg)
 
     if args.target not in targets:
         available = ", ".join(targets.keys()) or "none"
-        print(f"Error: Target '{args.target}' not found in manifest. Available targets: {available}", file=sys.stderr)
-        sys.exit(1)
+        raise ManifestError(f"Target '{args.target}' not found in manifest. Available targets: {available}")
 
     target_names = [args.target]
     command = args.command  # 'push' or 'pull'
 
-    # Run pre-flight guard checks & collect sync point SHAs
     workflow_last_revs = {}
     base_dir = Path(args.config).parent.resolve()
     default_hybrid_url = manifest.get("hybrid_repo", "./hybrid")
 
-    with TempRepoManager() as temp_dirs:
-        for target_name in target_names:
-            t_cfg = targets[target_name]
-            if command == "push":
-                dirs_to_check = ["push"]
-            elif command == "pull":
-                dirs_to_check = ["pull"]
-            else:
-                dirs_to_check = []
+    temp_dirs = repo_cache if isinstance(repo_cache, dict) else (repo_cache.temp_dirs if repo_cache else None)
 
-            for direction in dirs_to_check:
-                ok = run_preflight_guards(target_name, direction, t_cfg, manifest, str(args.config), args, temp_dirs)
-                if not ok:
-                    sys.exit(1)
+    for target_name in target_names:
+        t_cfg = targets[target_name]
+        dirs_to_check = [command] if command in ("push", "pull") else []
 
-                # Resolve effective last synced SHA for Copybara
-                origin_cfg = t_cfg.get("origin", {})
-                hybrid_cfg = t_cfg.get("hybrid", {})
+        for direction in dirs_to_check:
+            run_preflight_guards(target_name, direction, t_cfg, manifest, str(args.config), args, temp_dirs)
 
-                origin_url = resolve_repo_url(origin_cfg.get("url", ""), base_dir)
-                origin_path = clean_path(origin_cfg.get("path", ""))
-                hybrid_url = resolve_repo_url(hybrid_cfg.get("url", default_hybrid_url), base_dir)
-                hybrid_path = clean_path(hybrid_cfg.get("path", ""))
-
-                if direction == "push":
-                    src_url, src_path, dst_url, dst_path = origin_url, origin_path, hybrid_url, hybrid_path
-                else:
-                    src_url, src_path, dst_url, dst_path = hybrid_url, hybrid_path, origin_url, origin_path
-
-                last_sync_sha, _ = find_effective_sync_point(src_url, src_path, dst_url, dst_path, temp_dirs)
-                dest_has_revid, _ = find_last_sync_info(dst_url, dst_path, temp_dirs)
-                if last_sync_sha and not dest_has_revid:
-                    workflow_last_revs[f"{target_name}-{direction}"] = last_sync_sha
-
-        # Determine workflows to run
-        workflows = []
-        if command == "push":
-            workflows = [f"{t}-push" for t in target_names]
-        elif command == "pull":
-            workflows = [f"{t}-pull" for t in target_names]
-
-        sky_content = generate_sky_config(manifest, target_filter=args.target, config_path=str(args.config))
-
-        # Manage working directory for .sky file
-        if args.workdir:
-            workdir = args.workdir
-            workdir.mkdir(parents=True, exist_ok=True)
-            sky_path = workdir / "copy.bara.sky"
-            sky_path.write_text(sky_content, encoding="utf-8")
-            run_workflows(workflows, sky_path, args, workflow_last_revs)
-        else:
-            with tempfile.TemporaryDirectory(prefix="hybrid_syncer_") as tmp_dir:
-                sky_path = Path(tmp_dir) / "copy.bara.sky"
-                sky_path.write_text(sky_content, encoding="utf-8")
-                run_workflows(workflows, sky_path, args, workflow_last_revs)
-
-
-def handle_status(args):
-    manifest = load_manifest(args.config)
-    targets = manifest.get("targets", {})
-    base_dir = Path(args.config).parent.resolve()
-    default_hybrid_url = manifest.get("hybrid_repo", "./hybrid")
-
-    if getattr(args, "target", None):
-        if args.target not in targets:
-            available = ", ".join(targets.keys()) or "none"
-            print(f"Error: Target '{args.target}' not found in manifest. Available targets: {available}", file=sys.stderr)
-            sys.exit(1)
-        targets_to_check = {args.target: targets[args.target]}
-    else:
-        targets_to_check = targets
-
-    headers = ["Target", "Origin Path", "Hybrid Path", "Origin Status", "Hybrid Status", "Sync Status"]
-    rows = []
-
-    with TempRepoManager() as temp_dirs:
-        for t_name, t_cfg in targets_to_check.items():
+            # Resolve effective last synced SHA for Copybara
             origin_cfg = t_cfg.get("origin", {})
             hybrid_cfg = t_cfg.get("hybrid", {})
 
@@ -183,67 +109,128 @@ def handle_status(args):
             hybrid_url = resolve_repo_url(hybrid_cfg.get("url", default_hybrid_url), base_dir)
             hybrid_path = clean_path(hybrid_cfg.get("path", ""))
 
-            origin_path_display = format_path_display(origin_path)
-            hybrid_path_display = format_path_display(hybrid_path)
-
-            # Check repository existence
-            origin_exists, _ = check_repo_exists(origin_url) if origin_url else (False, "")
-            hybrid_exists, _ = check_repo_exists(hybrid_url) if hybrid_url else (False, "")
-
-            if not origin_exists or not hybrid_exists:
-                origin_status = "Missing Repo" if not origin_exists else "Clean"
-                hybrid_status = "Missing Repo" if not hybrid_exists else "Clean"
-                sync_status = "Repository Not Found"
-                rows.append((t_name, origin_path_display, hybrid_path_display, origin_status, hybrid_status, sync_status))
-                continue
-
-            # Check uncommitted local changes
-            origin_uncommitted = check_clean_workspace(origin_url)
-            hybrid_uncommitted = check_clean_workspace(hybrid_url)
-
-            source_last_sync_sha, dest_commit_sha = find_effective_sync_point(origin_url, origin_path, hybrid_url, hybrid_path, temp_dirs)
-
-            if not source_last_sync_sha or not dest_commit_sha:
-                origin_status = f"Dirty ({len(origin_uncommitted)})" if origin_uncommitted else "Untracked"
-                hybrid_status = f"Dirty ({len(hybrid_uncommitted)})" if hybrid_uncommitted else "Untracked"
-                sync_status = "Untracked / No Sync History"
+            if direction == "push":
+                src_url, src_path, dst_url, dst_path = origin_url, origin_path, hybrid_url, hybrid_path
             else:
-                ancestry_ok = check_ancestry_history(origin_url, source_last_sync_sha, temp_dirs) and check_ancestry_history(hybrid_url, dest_commit_sha, temp_dirs)
+                src_url, src_path, dst_url, dst_path = hybrid_url, hybrid_path, origin_url, origin_path
 
-                origin_ahead = get_new_commits_count(origin_url, source_last_sync_sha, origin_path, temp_dirs)
-                hybrid_ahead = get_new_commits_count(hybrid_url, dest_commit_sha, hybrid_path, temp_dirs)
+            last_sync_sha, _ = find_effective_sync_point(src_url, src_path, dst_url, dst_path, temp_dirs)
+            dest_has_revid, _ = find_last_sync_info(dst_url, dst_path, temp_dirs)
+            if last_sync_sha and not dest_has_revid:
+                workflow_last_revs[f"{target_name}-{direction}"] = last_sync_sha
 
-                diverged = origin_ahead > 0 and hybrid_ahead > 0
+    # Determine workflows to run
+    workflows = []
+    if command == "push":
+        workflows = [f"{t}-push" for t in target_names]
+    elif command == "pull":
+        workflows = [f"{t}-pull" for t in target_names]
 
-                # Origin Status string
-                orig_parts = []
-                if origin_ahead > 0:
-                    orig_parts.append(f"Ahead ({origin_ahead})")
-                if origin_uncommitted:
-                    orig_parts.append(f"Dirty ({len(origin_uncommitted)})" if not origin_ahead else "[Dirty]")
-                origin_status = " ".join(orig_parts) if orig_parts else "Clean"
+    sky_content = generate_sky_config(manifest, target_filter=args.target, config_path=str(args.config))
 
-                # Hybrid Status string
-                hyb_parts = []
-                if hybrid_ahead > 0:
-                    hyb_parts.append(f"Ahead ({hybrid_ahead})")
-                if hybrid_uncommitted:
-                    hyb_parts.append(f"Dirty ({len(hybrid_uncommitted)})" if not hybrid_ahead else "[Dirty]")
-                hybrid_status = " ".join(hyb_parts) if hyb_parts else "Clean"
+    # Manage working directory for .sky file
+    if args.workdir:
+        workdir = args.workdir
+        workdir.mkdir(parents=True, exist_ok=True)
+        sky_path = workdir / "copy.bara.sky"
+        sky_path.write_text(sky_content, encoding="utf-8")
+        run_workflows(workflows, sky_path, args, workflow_last_revs)
+    else:
+        with tempfile.TemporaryDirectory(prefix="hybrid_syncer_") as tmp_dir:
+            sky_path = Path(tmp_dir) / "copy.bara.sky"
+            sky_path.write_text(sky_content, encoding="utf-8")
+            run_workflows(workflows, sky_path, args, workflow_last_revs)
 
-                # Sync Status
-                if not ancestry_ok:
-                    sync_status = "⚠️ History Rewritten"
-                elif diverged:
-                    sync_status = "⚠️ DIVERGED (Conflict)"
-                elif origin_ahead > 0:
-                    sync_status = "Ready to Push"
-                elif hybrid_ahead > 0:
-                    sync_status = "Ready to Pull"
-                else:
-                    sync_status = "In Sync"
 
+def handle_status(args, repo_cache=None):
+    manifest = load_manifest(args.config)
+    targets = manifest.get("targets", {})
+    base_dir = Path(args.config).parent.resolve()
+    default_hybrid_url = manifest.get("hybrid_repo", "./hybrid")
+
+    if getattr(args, "target", None):
+        if args.target not in targets:
+            available = ", ".join(targets.keys()) or "none"
+            raise ManifestError(f"Target '{args.target}' not found in manifest. Available targets: {available}")
+        targets_to_check = {args.target: targets[args.target]}
+    else:
+        targets_to_check = targets
+
+    headers = ["Target", "Origin Path", "Hybrid Path", "Origin Status", "Hybrid Status", "Sync Status"]
+    rows = []
+
+    temp_dirs = repo_cache if isinstance(repo_cache, dict) else (repo_cache.temp_dirs if repo_cache else None)
+
+    for t_name, t_cfg in targets_to_check.items():
+        origin_cfg = t_cfg.get("origin", {})
+        hybrid_cfg = t_cfg.get("hybrid", {})
+
+        origin_url = resolve_repo_url(origin_cfg.get("url", ""), base_dir)
+        origin_path = clean_path(origin_cfg.get("path", ""))
+        hybrid_url = resolve_repo_url(hybrid_cfg.get("url", default_hybrid_url), base_dir)
+        hybrid_path = clean_path(hybrid_cfg.get("path", ""))
+
+        origin_path_display = format_path_display(origin_path)
+        hybrid_path_display = format_path_display(hybrid_path)
+
+        # Check repository existence
+        origin_exists, _ = check_repo_exists(origin_url) if origin_url else (False, "")
+        hybrid_exists, _ = check_repo_exists(hybrid_url) if hybrid_url else (False, "")
+
+        if not origin_exists or not hybrid_exists:
+            origin_status = "Missing Repo" if not origin_exists else "Clean"
+            hybrid_status = "Missing Repo" if not hybrid_exists else "Clean"
+            sync_status = "Repository Not Found"
             rows.append((t_name, origin_path_display, hybrid_path_display, origin_status, hybrid_status, sync_status))
+            continue
+
+        # Check uncommitted local changes
+        origin_uncommitted = check_clean_workspace(origin_url)
+        hybrid_uncommitted = check_clean_workspace(hybrid_url)
+
+        source_last_sync_sha, dest_commit_sha = find_effective_sync_point(origin_url, origin_path, hybrid_url, hybrid_path, temp_dirs)
+
+        if not source_last_sync_sha or not dest_commit_sha:
+            origin_status = f"Dirty ({len(origin_uncommitted)})" if origin_uncommitted else "Untracked"
+            hybrid_status = f"Dirty ({len(hybrid_uncommitted)})" if hybrid_uncommitted else "Untracked"
+            sync_status = "Untracked / No Sync History"
+        else:
+            ancestry_ok = check_ancestry_history(origin_url, source_last_sync_sha, temp_dirs) and check_ancestry_history(hybrid_url, dest_commit_sha, temp_dirs)
+
+            origin_ahead = get_new_commits_count(origin_url, source_last_sync_sha, origin_path, temp_dirs)
+            hybrid_ahead = get_new_commits_count(hybrid_url, dest_commit_sha, hybrid_path, temp_dirs)
+
+            diverged = origin_ahead > 0 and hybrid_ahead > 0
+
+            # Origin Status string
+            orig_parts = []
+            if origin_ahead > 0:
+                orig_parts.append(f"Ahead ({origin_ahead})")
+            if origin_uncommitted:
+                orig_parts.append(f"Dirty ({len(origin_uncommitted)})" if not origin_ahead else "[Dirty]")
+            origin_status = " ".join(orig_parts) if orig_parts else "Clean"
+
+            # Hybrid Status string
+            hyb_parts = []
+            if hybrid_ahead > 0:
+                hyb_parts.append(f"Ahead ({hybrid_ahead})")
+            if hybrid_uncommitted:
+                hyb_parts.append(f"Dirty ({len(hybrid_uncommitted)})" if not hybrid_ahead else "[Dirty]")
+            hybrid_status = " ".join(hyb_parts) if hyb_parts else "Clean"
+
+            # Sync Status
+            if not ancestry_ok:
+                sync_status = "⚠️ History Rewritten"
+            elif diverged:
+                sync_status = "⚠️ DIVERGED (Conflict)"
+            elif origin_ahead > 0:
+                sync_status = "Ready to Push"
+            elif hybrid_ahead > 0:
+                sync_status = "Ready to Pull"
+            else:
+                sync_status = "In Sync"
+
+        rows.append((t_name, origin_path_display, hybrid_path_display, origin_status, hybrid_status, sync_status))
 
     # Calculate column widths
     min_widths = [15, 15, 15, 15, 15, 20]
@@ -253,16 +240,16 @@ def handle_status(args):
         for i, val in enumerate(row):
             col_widths[i] = max(col_widths[i], len(val))
 
-    # Format table
+    # Format table to stderr
     header_line = "  ".join(f"{headers[i]:<{col_widths[i]}}" for i in range(len(headers)))
     sep_line = "-" * len(header_line)
 
-    print(f"\n{header_line}")
-    print(sep_line)
+    print(f"\n{header_line}", file=sys.stderr)
+    print(sep_line, file=sys.stderr)
     for row in rows:
         row_line = "  ".join(f"{row[i]:<{col_widths[i]}}" for i in range(len(headers)))
-        print(row_line)
-    print()
+        print(row_line, file=sys.stderr)
+    print("", file=sys.stderr)
 
     if getattr(args, "check_unmapped", False):
         analyze_unmapped_origin_paths(manifest, base_dir, target_filter=getattr(args, "target", ""))
@@ -296,8 +283,8 @@ def analyze_unmapped_origin_paths(manifest: dict, base_dir: Path, target_filter:
         origin_mapped[o_url].add(o_path)
         origin_targets[o_url].append(t_name)
 
-    print("\n🔍 Unmapped & Orphan Path Analysis (Origin Repositories):")
-    print("-" * 80)
+    print("\n🔍 Unmapped & Orphan Path Analysis (Origin Repositories):", file=sys.stderr)
+    print("-" * 80, file=sys.stderr)
 
     total_unmapped_tracked = 0
     total_unmapped_local = 0
@@ -342,36 +329,36 @@ def analyze_unmapped_origin_paths(manifest: dict, base_dir: Path, target_filter:
             display_paths = ", ".join([f"{p}/" if p else "." for p in sorted(mapped_paths)]) or "."
             t_names = ", ".join(origin_targets[o_url])
 
-            print(f"Repository: {o_url} (Targets: {t_names})")
-            print(f"  Mapped Target Paths : {display_paths}")
+            print(f"Repository: {o_url} (Targets: {t_names})", file=sys.stderr)
+            print(f"  Mapped Target Paths : {display_paths}", file=sys.stderr)
 
             if unmapped_tracked:
-                print(f"  Tracked Orphan Files ({len(unmapped_tracked)}):")
+                print(f"  Tracked Orphan Files ({len(unmapped_tracked)}):", file=sys.stderr)
                 for uf in unmapped_tracked[:10]:
-                    print(f"    • {uf}")
+                    print(f"    • {uf}", file=sys.stderr)
                 if len(unmapped_tracked) > 10:
-                    print(f"    ... and {len(unmapped_tracked) - 10} more tracked file(s).")
+                    print(f"    ... and {len(unmapped_tracked) - 10} more tracked file(s).", file=sys.stderr)
 
             if unmapped_local:
-                print(f"  Uncommitted Orphan Files ({len(unmapped_local)}):")
+                print(f"  Uncommitted Orphan Files ({len(unmapped_local)}):", file=sys.stderr)
                 for st, uf in unmapped_local[:10]:
-                    print(f"    • [{st}] {uf}")
+                    print(f"    • [{st}] {uf}", file=sys.stderr)
                 if len(unmapped_local) > 10:
-                    print(f"    ... and {len(unmapped_local) - 10} more uncommitted file(s).")
-            print()
+                    print(f"    ... and {len(unmapped_local) - 10} more uncommitted file(s).", file=sys.stderr)
+            print("", file=sys.stderr)
 
     if total_unmapped_tracked == 0 and total_unmapped_local == 0:
-        print(f"✔ No unmapped files or orphan paths detected across {len(origin_mapped)} origin repository(ies). All files match defined target paths.\n")
+        print(f"✔ No unmapped files or orphan paths detected across {len(origin_mapped)} origin repository(ies). All files match defined target paths.\n", file=sys.stderr)
     else:
-        print(f"⚠️ Notice: Detected {total_unmapped_tracked} tracked and {total_unmapped_local} uncommitted orphan file(s) outside defined target paths.")
-        print("          These files are outside any target's origin.path and will NOT be synced to hybrid repository.\n")
+        print(f"⚠️ Notice: Detected {total_unmapped_tracked} tracked and {total_unmapped_local} uncommitted orphan file(s) outside defined target paths.", file=sys.stderr)
+        print("          These files are outside any target's origin.path and will NOT be synced to hybrid repository.\n", file=sys.stderr)
 
 
-def handle_doctor(args):
+def handle_doctor(args, repo_cache=None):
     manifest = load_manifest(args.config)
     num_errors, _ = check_manifest_health(manifest, config_path=args.config)
     if num_errors > 0:
-        sys.exit(1)
+        raise ManifestError(f"Manifest health check failed with {num_errors} error(s).")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -501,7 +488,22 @@ def build_parser() -> argparse.ArgumentParser:
 def main():
     parser = build_parser()
     args = parser.parse_args()
-    args.func(args)
+
+    try:
+        with TempRepoCache() as repo_cache:
+            args.func(args, repo_cache)
+
+    except SyncerError as e:
+        print(f"\n{RED}❌ [{e.category}]{RESET} {e.message}", file=sys.stderr)
+        sys.exit(e.exit_code)
+
+    except KeyboardInterrupt:
+        print("\n\nOperation aborted by user.", file=sys.stderr)
+        sys.exit(ExitCode.GENERAL_ERROR)
+
+    except Exception as e:
+        print(f"\n{RED}❌ [UNHANDLED ERROR]{RESET} An unexpected error occurred: {e}", file=sys.stderr)
+        sys.exit(ExitCode.GENERAL_ERROR)
 
 
 if __name__ == "__main__":

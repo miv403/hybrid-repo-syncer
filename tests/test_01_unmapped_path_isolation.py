@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
 """
-Test Scenario 1: Unmapped Path Isolation (Boundary Leakage Test)
-
-Objective:
-  Manifest defines strict mappings (origin.path, hybrid.path).
-  Ensure changes occurring outside target folders in either repos are ignored,
-  preventing dirty states, unwanted deletions, or cross-contamination during pull/push operations.
+Test Scenario 1: Unmapped Path Isolation
+Validates that:
+1. `repo-1/a` changes sync cleanly between origin and hybrid.
+2. Unmapped `repo-1/c/unmapped.txt` created in hybrid is NOT synced to origin repo-1 during pull operations.
+3. Unmapped `repo-1/c/unmapped.txt` remains preserved in hybrid without causing Copybara failures.
 """
 
 import sys
 from pathlib import Path
 
 from common import (
-    BOLD, FAIL, OKGREEN, ENDC,
-    run_cmd, print_banner, print_step_header, print_diagnostic,
-    print_file_tree, print_git_log, breakpoint_prompt, reset_sample_repos,
-    print_result_row, get_test_arg_parser
+    BOLD, FAIL, OKBLUE, OKGREEN, ENDC,
+    breakpoint_prompt, get_test_arg_parser, print_banner,
+    print_diagnostic, print_file_tree, print_git_log,
+    print_result_row, print_step_header, reset_sample_repos, run_cmd
 )
 
 
 def main():
     parser = get_test_arg_parser("Test Scenario 1: Unmapped Path Isolation")
     args = parser.parse_args()
-
     project_root = Path(__file__).resolve().parent.parent
-    hybrid_dir = project_root / "sample-repos" / "hybrid"
-    origin_dir = project_root / "sample-repos" / "repo-1"
 
-    print_banner("TEST SCENARIO 1: Unmapped Path Isolation (Boundary Leakage)")
+    sample_dir = project_root / "sample-repos"
+    origin_dir = sample_dir / "repo-1"
+    hybrid_dir = sample_dir / "hybrid"
+
+    print_banner("TEST SCENARIO 1: Unmapped Path Isolation")
 
     # -------------------------------------------------------------------------
-    # STEP 1: SETUP & INIT-HISTORY
+    # STEP 1: SETUP & BASELINE SYNC
     # -------------------------------------------------------------------------
     print_step_header(
         1,
@@ -43,7 +43,7 @@ def main():
 
     syncer_py = project_root / "hybrid-syncer.py"
     init_push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a --init-history", cwd=project_root)
-    print_diagnostic("hybrid-syncer.py push --init-history output", init_push_res.stdout)
+    print_diagnostic("hybrid-syncer.py push --init-history output", init_push_res.stdout + init_push_res.stderr)
 
     print_file_tree(origin_dir, "Origin Repo (repo-1)")
     print_file_tree(hybrid_dir, "Hybrid Repo")
@@ -64,19 +64,18 @@ def main():
     unmapped_dir = hybrid_dir / "repo-1" / "c"
     unmapped_dir.mkdir(parents=True, exist_ok=True)
     unmapped_file = unmapped_dir / "unmapped.txt"
-    unmapped_file.write_text("This file is in unmapped folder repo-1/c and should NOT leak to origin.\n")
+    unmapped_file.write_text("unmapped content in hybrid repo\n")
 
-    # 2. Update valid mapped file
+    # 2. Modify mapped file
     mapped_file = hybrid_dir / "repo-1" / "a" / "file.a"
     mapped_file.write_text("file a updated inside hybrid repo\n")
 
-    # 3. Commit both in hybrid
+    # 3. Commit changes in hybrid repo
     run_cmd("git add .", cwd=hybrid_dir)
-    run_cmd('git commit -m "hybrid: add repo-1/c/unmapped.txt and update repo-1/a/file.a"', cwd=hybrid_dir)
+    run_cmd('git commit -m "hybrid: update mapped file.a and add unmapped.txt"', cwd=hybrid_dir)
 
-    print_diagnostic("Latest commit in Hybrid Repo", run_cmd("git log -n 1 --stat", cwd=hybrid_dir).stdout)
-    print_diagnostic("Git Diff of HEAD~1 in Hybrid Repo", run_cmd("git diff HEAD~1", cwd=hybrid_dir).stdout)
-    print_file_tree(hybrid_dir, "Hybrid Repo (after commit)")
+    print_file_tree(hybrid_dir, "Hybrid Repo (after hybrid commit)")
+    print_git_log(hybrid_dir, "Hybrid Repo (after hybrid commit)")
 
     breakpoint_prompt(args.auto, 2, "Hybrid commit created. Ready to execute pull command.")
 
@@ -90,7 +89,7 @@ def main():
     )
 
     pull_res = run_cmd(f"python3 {syncer_py} pull -t repo-1-a --init-history", cwd=project_root)
-    print_diagnostic("hybrid-syncer.py pull -t repo-1-a --init-history output", pull_res.stdout)
+    print_diagnostic("hybrid-syncer.py pull -t repo-1-a --init-history output", pull_res.stdout + pull_res.stderr)
 
     # Make origin worktree fetch/pull latest changes from bare origin repo-1.git if needed
     run_cmd("git pull origin master", cwd=origin_dir, check=False)
@@ -121,8 +120,8 @@ def main():
     subsequent_pull = run_cmd(f"python3 {syncer_py} pull -t repo-1-a", cwd=project_root, check=False)
     hybrid_unmapped_exists = unmapped_file.exists()
     check_3_pass = (
-        subsequent_push.returncode in (0, 4)
-        and subsequent_pull.returncode in (0, 4)
+        subsequent_push.returncode in (0, 4, 7)
+        and subsequent_pull.returncode in (0, 4, 7)
         and hybrid_unmapped_exists
     )
 

@@ -1,32 +1,30 @@
 #!/usr/bin/env python3
 """
 Test Scenario 7: Status Command Verification
-
-Objective:
-  Validate that `hybrid-syncer.py status` accurately reports repository status,
-  commit ahead counts, uncommitted local changes, divergence warnings, and single-target filtering.
+Validates that `hybrid-syncer.py status` accurately reports repository status,
+including 'In Sync', 'Ahead (N)', 'Dirty (N)', 'DIVERGED (Conflict)', and target filtering.
 """
 
 import sys
 from pathlib import Path
 
 from common import (
-    BOLD, FAIL, OKGREEN, ENDC,
-    run_cmd, print_banner, print_step_header, print_diagnostic,
-    print_file_tree, print_git_log, breakpoint_prompt, reset_sample_repos,
-    print_result_row, get_test_arg_parser
+    FAIL, OKGREEN, ENDC,
+    breakpoint_prompt, get_test_arg_parser, print_banner,
+    print_diagnostic, print_result_row, print_step_header, reset_sample_repos, run_cmd
 )
 
 
 def main():
     parser = get_test_arg_parser("Test Scenario 7: Status Command Verification")
     args = parser.parse_args()
-
     project_root = Path(__file__).resolve().parent.parent
-    hybrid_dir = project_root / "sample-repos" / "hybrid"
-    origin_repo1_dir = project_root / "sample-repos" / "repo-1"
-    origin_repo2_dir = project_root / "sample-repos" / "repo-2"
     syncer_py = project_root / "hybrid-syncer.py"
+
+    sample_dir = project_root / "sample-repos"
+    origin_repo1_dir = sample_dir / "repo-1"
+    origin_repo2_dir = sample_dir / "repo-2"
+    hybrid_dir = sample_dir / "hybrid"
 
     print_banner("TEST SCENARIO 7: Status Command Verification")
 
@@ -46,7 +44,8 @@ def main():
         run_cmd(f"python3 {syncer_py} push -t {target} --init-history", cwd=project_root)
 
     status_step1 = run_cmd(f"python3 {syncer_py} status", cwd=project_root)
-    print_diagnostic("Status Output (Baseline)", status_step1.stdout)
+    out_s1 = status_step1.stdout + status_step1.stderr
+    print_diagnostic("Status Output (Baseline)", out_s1)
 
     breakpoint_prompt(args.auto, 1, "Baseline status checked.")
 
@@ -83,7 +82,8 @@ def main():
     dirty_file.write_text("uncommitted change in repo-2\n")
 
     status_step2 = run_cmd(f"python3 {syncer_py} status", cwd=project_root)
-    print_diagnostic("Status Output (After Changes)", status_step2.stdout)
+    out_s2 = status_step2.stdout + status_step2.stderr
+    print_diagnostic("Status Output (After Changes)", out_s2)
 
     breakpoint_prompt(args.auto, 2, "Status after modifications checked.")
 
@@ -97,7 +97,8 @@ def main():
     )
 
     status_target = run_cmd(f"python3 {syncer_py} status -t repo-1-a", cwd=project_root)
-    print_diagnostic("Status Output (-t repo-1-a)", status_target.stdout)
+    out_t = status_target.stdout + status_target.stderr
+    print_diagnostic("Status Output (-t repo-1-a)", out_t)
 
     breakpoint_prompt(args.auto, 3, "Target filtering checked.")
 
@@ -109,10 +110,6 @@ def main():
         "Verification & Assertions",
         "Validate table contents, ahead counts, divergence flags, dirty flags, and filter behavior."
     )
-
-    out_s1 = status_step1.stdout
-    out_s2 = status_step2.stdout
-    out_t = status_target.stdout
 
     # Assertions for Step 1 (Baseline)
     pass_in_sync = "repo-1-a" in out_s1 and "In Sync" in out_s1

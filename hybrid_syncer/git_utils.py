@@ -22,7 +22,7 @@ def run_git(args: list, cwd=None) -> tuple[int, str, str]:
             text=True
         )
         return res.returncode, res.stdout, res.stderr
-    except Exception as e:
+    except (subprocess.SubprocessError, OSError) as e:
         return -1, "", str(e)
 
 
@@ -286,7 +286,7 @@ def check_pre_apply_patch(source_repo_url: str, source_path: str, last_sync_sour
             if res.returncode != 0:
                 err_msg = res.stderr.strip() or res.stdout.strip() or f"exit code {res.returncode}"
                 return False, err_msg
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             return False, str(e)
 
         return True, ""

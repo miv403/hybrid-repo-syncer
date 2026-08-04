@@ -6,6 +6,12 @@ import sys
 from pathlib import Path
 
 from hybrid_syncer.config import clean_path
+from hybrid_syncer.errors import (
+    AncestryRewrittenError,
+    DirtyWorkspaceError,
+    DivergenceError,
+    PatchApplyError,
+)
 from hybrid_syncer.git_utils import (
     check_ancestry_history,
     check_clean_workspace,
@@ -15,14 +21,11 @@ from hybrid_syncer.git_utils import (
     resolve_repo_url,
 )
 
-RED = "\033[91m\033[1m"
-RESET = "\033[0m"
-
 
 def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, manifest: dict, config_path: str, args, temp_dirs: dict | None = None) -> bool:
     if getattr(args, "skip_guards", False):
         if args.verbose:
-            print(f"[VERBOSE] Guard checks explicitly skipped via --skip-guards for {target_name} ({direction})")
+            print(f"[VERBOSE] Guard checks explicitly skipped via --skip-guards for {target_name} ({direction})", file=sys.stderr)
         return True
 
     base_dir = Path(config_path).parent.resolve()
@@ -51,30 +54,19 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
     for r_url, r_label in [(source_url, source_name), (dest_url, dest_name)]:
         uncommitted = check_clean_workspace(r_url)
         if uncommitted:
-            print(f"\n{RED}❌ [SAFETY CIRCUIT BREAKER]{RESET} Clean Workspace Guard Failed!", file=sys.stderr)
-            print(f"Target '{target_name}' ({direction}): {r_label} repository at '{r_url}' has uncommitted changes:", file=sys.stderr)
-            for file_line in uncommitted[:10]:
-                print(f"  {file_line}", file=sys.stderr)
-            if len(uncommitted) > 10:
-                print(f"  ... and {len(uncommitted) - 10} more files.", file=sys.stderr)
-            print("Please commit or stash your changes before syncing.", file=sys.stderr)
-            return False
+            raise DirtyWorkspaceError(target_name, direction, r_label, r_url, uncommitted)
 
     source_last_sync_sha, dest_commit_sha = find_effective_sync_point(source_url, source_path, dest_url, dest_path, temp_dirs)
 
     if not source_last_sync_sha or not dest_commit_sha:
         if args.verbose:
-            print(f"[VERBOSE] No previous sync history (GitOrigin-RevId) found between {source_name} and {dest_name} for '{target_name}'. Skipping history/divergence checks.")
+            print(f"[VERBOSE] No previous sync history (GitOrigin-RevId) found between {source_name} and {dest_name} for '{target_name}'. Skipping history/divergence checks.", file=sys.stderr)
         return True
 
     # --- Guard Check 1: Ancestry & History Check ---
     is_ancestor = check_ancestry_history(source_url, source_last_sync_sha, temp_dirs)
     if not is_ancestor:
-        print(f"\n{RED}❌ [SAFETY CIRCUIT BREAKER]{RESET} Ancestry & History Guard Failed!", file=sys.stderr)
-        print(f"Target '{target_name}' ({direction}): {source_name} commit history was rewritten (force-push or rebase detected).", file=sys.stderr)
-        print(f"Recorded last synced commit '{source_last_sync_sha[:8]}' is not in active history lineage of {source_name} ('{source_url}').", file=sys.stderr)
-        print("Run with --init-history to re-baseline.", file=sys.stderr)
-        return False
+        raise AncestryRewrittenError(target_name, direction, source_name, source_url, source_last_sync_sha)
 
     # --- Guard Check 2: Concurrent Fork Check (Divergence Guard) ---
     diverged, source_new, dest_new = check_divergence(
@@ -83,12 +75,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
         temp_dirs
     )
     if diverged:
-        print(f"\n{RED}❌ [SAFETY CIRCUIT BREAKER]{RESET} Concurrent Fork Guard Failed (Divergence Detected)!", file=sys.stderr)
-        print(f"Target '{target_name}' ({direction}): Concurrent changes detected in both {source_name} and {dest_name} since last sync point ({source_last_sync_sha[:8]}).", file=sys.stderr)
-        print(f"  • {source_name} has new commits in '{source_path or '.'}'", file=sys.stderr)
-        print(f"  • {dest_name} has new commits in '{dest_path or '.'}'", file=sys.stderr)
-        print("Please pull/merge or resolve manually before syncing.", file=sys.stderr)
-        return False
+        raise DivergenceError(target_name, direction, source_name, source_path, dest_name, dest_path, source_last_sync_sha)
 
     # --- Guard Check 3: Pre-Apply Patch Check ---
     if source_new:
@@ -98,13 +85,9 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
             temp_dirs
         )
         if not patch_ok:
-            print(f"\n{RED}❌ [SAFETY CIRCUIT BREAKER]{RESET} Pre-Apply Patch Guard Failed (Structural / Content Conflict)!", file=sys.stderr)
-            print(f"Target '{target_name}' ({direction}): Incoming changes from {source_name} cannot be applied cleanly to {dest_name}.", file=sys.stderr)
-            print(f"Details: {patch_err}", file=sys.stderr)
-            print("Please resolve conflicts manually before syncing.", file=sys.stderr)
-            return False
+            raise PatchApplyError(target_name, direction, source_name, dest_name, patch_err)
 
     if args.verbose:
-        print(f"[VERBOSE] All pre-flight guard checks PASSED for '{target_name}' ({direction}).")
+        print(f"[VERBOSE] All pre-flight guard checks PASSED for '{target_name}' ({direction}).", file=sys.stderr)
 
     return True

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 import yaml
 
+from hybrid_syncer.errors import ManifestError
 from hybrid_syncer.git_utils import check_repo_exists, resolve_repo_url
 
 STARTER_MANIFEST = """# hybrid-syncer configuration manifest
@@ -48,20 +49,16 @@ def clean_path(p) -> str:
 
 def load_manifest(config_path: Path) -> dict:
     if not config_path.exists():
-        print(f"Error: Configuration file '{config_path}' not found.", file=sys.stderr)
-        print("Run 'hybrid-syncer init' to create a starter sync-manifest.yaml.", file=sys.stderr)
-        sys.exit(1)
+        raise ManifestError(f"Configuration file '{config_path}' not found.\nRun 'hybrid-syncer init' to create a starter sync-manifest.yaml.")
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-    except Exception as e:
-        print(f"Error reading configuration file '{config_path}': {e}", file=sys.stderr)
-        sys.exit(1)
+    except (yaml.YAMLError, OSError) as e:
+        raise ManifestError(f"Error reading configuration file '{config_path}': {e}")
 
     if "targets" not in data or not isinstance(data.get("targets"), dict):
-        print(f"Error: Invalid manifest format in '{config_path}'. 'targets' section missing or invalid.", file=sys.stderr)
-        sys.exit(1)
+        raise ManifestError(f"Invalid manifest format in '{config_path}'. 'targets' section missing or invalid.")
 
     return data
 
@@ -103,8 +100,7 @@ def generate_sky_config(manifest: dict, target_filter: str = "", config_path: st
     if target_filter:
         if target_filter not in targets:
             available = ", ".join(targets.keys()) or "none"
-            print(f"Error: Target '{target_filter}' not found in manifest. Available targets: {available}", file=sys.stderr)
-            sys.exit(1)
+            raise ManifestError(f"Target '{target_filter}' not found in manifest. Available targets: {available}")
         targets_to_gen = {target_filter: targets[target_filter]}
     else:
         targets_to_gen = targets
@@ -128,8 +124,7 @@ def generate_sky_config(manifest: dict, target_filter: str = "", config_path: st
 
         raw_origin_url = origin_cfg.get("url")
         if not raw_origin_url:
-            print(f"Error: Target '{t_name}' is missing origin.url", file=sys.stderr)
-            sys.exit(1)
+            raise ManifestError(f"Target '{t_name}' is missing origin.url")
 
         origin_url = resolve_repo_url(raw_origin_url, base_dir)
         origin_branch = origin_cfg.get("branch", default_branch)
@@ -229,7 +224,7 @@ def check_manifest_health(manifest: dict, config_path: Path = Path("sync-manifes
     errors = []
     warnings = []
 
-    print(f"\n🩺 Running Hybrid Syncer Health Check on '{config_path}'...\n")
+    print(f"\n🩺 Running Hybrid Syncer Health Check on '{config_path}'...\n", file=sys.stderr)
 
     # 1. Missing Local Repositories Check
     checked_repos = set()
@@ -283,17 +278,17 @@ def check_manifest_health(manifest: dict, config_path: Path = Path("sync-manifes
                     warnings.append(f"Target '{t_name}' origin path ({o_path}) overlaps with '{existing_target}' ({existing_path}) in '{o_url}'")
         origin_paths[o_url][t_name] = o_path
 
-    # Output findings
+    # Output findings to stderr
     if errors:
         for err in errors:
-            print(f"❌ Error: {err}")
+            print(f"❌ Error: {err}", file=sys.stderr)
     if warnings:
         for warn in warnings:
-            print(f"⚠️ Warning: {warn}")
+            print(f"⚠️ Warning: {warn}", file=sys.stderr)
 
     if not errors and not warnings:
-        print(f"✔ All {len(targets)} manifest target(s) passed health checks cleanly with 0 errors and 0 warnings.")
+        print(f"✔ All {len(targets)} manifest target(s) passed health checks cleanly with 0 errors and 0 warnings.", file=sys.stderr)
     else:
-        print(f"\nManifest Health Summary: {len(errors)} error(s), {len(warnings)} warning(s) detected across {len(targets)} target(s).")
+        print(f"\nManifest Health Summary: {len(errors)} error(s), {len(warnings)} warning(s) detected across {len(targets)} target(s).", file=sys.stderr)
 
     return len(errors), len(warnings)

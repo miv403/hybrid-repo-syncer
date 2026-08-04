@@ -1,41 +1,35 @@
 #!/usr/bin/env python3
 """
-Test Scenario 9: Unmapped Path & Orphan Analyzer Verification
-
-Objective:
-  Validate that `hybrid-syncer.py status --check-unmapped` accurately identifies:
-  - Tracked orphan files in origin repos living outside defined target paths
-  - Uncommitted local orphan files living outside defined target paths
-  - Ignores files inside valid mapped target paths
+Test Scenario 9: Unmapped Path & Orphan File Analyzer Verification
+Validates that `hybrid-syncer.py status --check-unmapped` accurately identifies:
+1. Tracked orphan files in origin repositories outside defined target paths.
+2. Uncommitted local orphan files outside defined target paths.
+3. Does NOT flag mapped target paths as orphan files.
 """
 
 import sys
 from pathlib import Path
 
 from common import (
-    BOLD, FAIL, OKGREEN, ENDC,
-    run_cmd, print_banner, print_step_header, print_diagnostic,
-    print_file_tree, print_git_log, breakpoint_prompt, reset_sample_repos,
-    print_result_row, get_test_arg_parser
+    FAIL, OKGREEN, ENDC,
+    breakpoint_prompt, get_test_arg_parser, print_banner,
+    print_diagnostic, print_result_row, print_step_header, reset_sample_repos, run_cmd
 )
 
 
 def main():
     parser = get_test_arg_parser("Test Scenario 9: Unmapped Path & Orphan Analyzer")
     args = parser.parse_args()
-
     project_root = Path(__file__).resolve().parent.parent
-    origin_repo1_dir = project_root / "sample-repos" / "repo-1"
-    origin_repo2_dir = project_root / "sample-repos" / "repo-2"
     syncer_py = project_root / "hybrid-syncer.py"
+
+    sample_dir = project_root / "sample-repos"
+    origin_repo1_dir = sample_dir / "repo-1"
 
     print_banner("TEST SCENARIO 9: Unmapped Path & Orphan Analyzer")
 
     if not args.skip_reset:
         reset_sample_repos(project_root)
-
-    for target in ["repo-1-a", "repo-1-b", "repo-2-a"]:
-        run_cmd(f"python3 {syncer_py} push -t {target} --init-history", cwd=project_root)
 
     # -------------------------------------------------------------------------
     # STEP 1: BASELINE UNMAPPED CHECK
@@ -47,7 +41,8 @@ def main():
     )
 
     status_step1 = run_cmd(f"python3 {syncer_py} status --check-unmapped", cwd=project_root)
-    print_diagnostic("Status Output (Baseline Unmapped Check)", status_step1.stdout)
+    out1 = status_step1.stdout + status_step1.stderr
+    print_diagnostic("Status Output (Baseline Unmapped Check)", out1)
 
     breakpoint_prompt(args.auto, 1, "Baseline unmapped check complete.")
 
@@ -67,7 +62,8 @@ def main():
     mapped_file.write_text("updated mapped file a\n")
 
     status_step2 = run_cmd(f"python3 {syncer_py} status --check-unmapped", cwd=project_root)
-    print_diagnostic("Status Output (With Uncommitted Orphan)", status_step2.stdout)
+    out2 = status_step2.stdout + status_step2.stderr
+    print_diagnostic("Status Output (With Uncommitted Orphan)", out2)
 
     breakpoint_prompt(args.auto, 2, "Uncommitted orphan check complete.")
 
@@ -79,9 +75,6 @@ def main():
         "Verification & Assertions",
         "Validate detection of tracked orphan files, uncommitted orphan files, and path filtering."
     )
-
-    out1 = status_step1.stdout
-    out2 = status_step2.stdout
 
     # Assertion 1: Tracked orphan file b/file.b in repo-2 detected
     pass_tracked_orphan = "b/file.b" in out1 and "Tracked Orphan Files" in out1
