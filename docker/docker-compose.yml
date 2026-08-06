@@ -1,0 +1,67 @@
+version: '3.8'
+
+networks:
+  origin-net:
+    driver: bridge
+  hybrid-net:
+    driver: bridge
+
+services:
+  gitea-origin:
+    image: gitea/gitea:1.24
+    container_name: gitea-origin
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__webhook__ALLOWED_HOST_LIST=*
+    volumes:
+      - ./gitea-data/origin:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "3000:3000"
+      - "2221:22"
+    networks:
+      - origin-net
+
+  gitea-hybrid:
+    image: gitea/gitea:1.24
+    container_name: gitea-hybrid
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__webhook__ALLOWED_HOST_LIST=*
+    volumes:
+      - ./gitea-data/hybrid:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "3001:3000"
+      - "2222:22"
+    networks:
+      - hybrid-net
+
+  syncer-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+      args:
+        GIT_USER_NAME: "Hybrid Syncer"
+        GIT_USER_EMAIL: "syncer@example.com"
+    container_name: syncer-runner
+    restart: unless-stopped
+    volumes:
+      - ./sync-manifest.yaml:/app/sync-manifest.yaml
+      - ./hybrid-syncer.py:/app/hybrid-syncer.py
+    networks:
+      - origin-net
+      - hybrid-net
+    ports:
+      - "8000:8000"
+    depends_on:
+      - gitea-origin
+      - gitea-hybrid
