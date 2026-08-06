@@ -151,18 +151,20 @@ def handle_execution(args, repo_cache=None):
 
     sky_content = generate_sky_config(manifest, target_filter=args.target, dest_filter=dest_name, config_path=str(args.config))
 
+    copybara_path = manifest.get("copybara_path")
+
     # Manage working directory for .sky file
     if args.workdir:
         workdir = args.workdir
         workdir.mkdir(parents=True, exist_ok=True)
         sky_path = workdir / "copy.bara.sky"
         sky_path.write_text(sky_content, encoding="utf-8")
-        run_workflows(workflows, sky_path, args, workflow_last_revs)
+        run_workflows(workflows, sky_path, args, workflow_last_revs, copybara_path=copybara_path, base_dir=base_dir)
     else:
         with tempfile.TemporaryDirectory(prefix="hybrid_syncer_") as tmp_dir:
             sky_path = Path(tmp_dir) / "copy.bara.sky"
             sky_path.write_text(sky_content, encoding="utf-8")
-            run_workflows(workflows, sky_path, args, workflow_last_revs)
+            run_workflows(workflows, sky_path, args, workflow_last_revs, copybara_path=copybara_path, base_dir=base_dir)
 
 
 def handle_status(args, repo_cache=None):

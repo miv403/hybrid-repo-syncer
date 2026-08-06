@@ -76,6 +76,7 @@ targets:
 
 ### Schema Description
 
+- `copybara_path` *(string, optional)*: Custom path to Copybara executable binary, `.jar`, `.bat`, `.cmd`, or `.ps1` script. Relative paths resolve relative to the manifest directory. If the file is not found, resolution falls back to environment variables, system PATH, or workspace `bin/`.
 - `hybrid_repo` *(string)*: Default URL or local path to the hybrid repository.
 - `default_branch` *(string)*: Default Git ref for origin and hybrid repos (e.g., `main` or `master`).
 - `authoring` *(object)*: Default Git commit author details (`default_email`, `default_name`).

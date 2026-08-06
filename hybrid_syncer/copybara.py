@@ -13,22 +13,54 @@ from hybrid_syncer.git_utils import IS_WINDOWS, normalize_path_for_git
 from hybrid_syncer.logger import logger
 
 
-def find_copybara_cmd() -> tuple[list[str] | None, str]:
+def format_copybara_cmd(p: Path) -> list[str]:
+    suffix = p.suffix.lower()
+    if suffix == ".jar":
+        return ["java", "-jar", str(p)]
+    elif suffix == ".ps1":
+        if shutil.which("pwsh"):
+            return ["pwsh", "-File", str(p)]
+        elif shutil.which("powershell"):
+            return ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(p)]
+        else:
+            return [str(p)]
+    else:
+        return [str(p)]
+
+
+def find_copybara_cmd(config_copybara_path: str | Path | None = None, base_dir: Path | None = None) -> tuple[list[str] | None, str]:
     """
     Locates the Copybara binary or executable jar cross-platform and identifies the resolution mode.
     
     Resolution Order:
+    0. Manifest configuration: copybara_path defined in sync-manifest.yaml.
     1. Environment variables: COPYBARA_PATH or COPYBARA_JAR.
-    2. System PATH via shutil.which ('copybara', 'copybara.bat', 'copybara.cmd', 'copybara.exe').
+    2. System PATH via shutil.which ('copybara', 'copybara.bat', 'copybara.cmd', 'copybara.exe', 'copybara.ps1').
     3. Workspace relative 'bin' directory (bin/copybara, bin/copybara.bat, bin/copybara.ps1, bin/copybara_deploy.jar).
     4. Well-known fallback paths (e.g. C:\\tools\\copybara\\bin\\copybara_deploy.jar, /tools/copybara/bin/copybara_deploy.jar).
 
     Returns a tuple of (command_list, resolution_mode_string).
     """
+    # 0. Manifest configuration
+    if config_copybara_path:
+        cp_path = Path(config_copybara_path)
+        if not cp_path.is_absolute() and base_dir:
+            resolved_cp = (base_dir / cp_path).resolve()
+        else:
+            resolved_cp = cp_path.resolve()
+
+        if resolved_cp.exists() and resolved_cp.is_file():
+            cmd = format_copybara_cmd(resolved_cp)
+            return cmd, f"Manifest Configuration (copybara_path: {config_copybara_path})"
+        else:
+            logger.info("[NOTICE] Manifest copybara_path '%s' (resolved: '%s') was not found on disk. Falling back to default resolution options.", config_copybara_path, resolved_cp)
+
     # 1. Environment variables
     env_path = os.getenv("COPYBARA_PATH")
-    if env_path and Path(env_path).exists():
-        return [env_path], f"Environment Variable (COPYBARA_PATH: {env_path})"
+    if env_path:
+        p_env = Path(env_path)
+        if p_env.exists() and p_env.is_file():
+            return format_copybara_cmd(p_env), f"Environment Variable (COPYBARA_PATH: {env_path})"
 
     env_jar = os.getenv("COPYBARA_JAR")
     if env_jar and Path(env_jar).exists():
@@ -37,12 +69,12 @@ def find_copybara_cmd() -> tuple[list[str] | None, str]:
     # 2. System PATH
     candidates = ["copybara"]
     if IS_WINDOWS:
-        candidates.extend(["copybara.bat", "copybara.cmd", "copybara.exe"])
+        candidates.extend(["copybara.bat", "copybara.cmd", "copybara.exe", "copybara.ps1"])
 
     for candidate in candidates:
         which_path = shutil.which(candidate)
         if which_path:
-            return [which_path], f"System PATH ({which_path})"
+            return format_copybara_cmd(Path(which_path)), f"System PATH ({which_path})"
 
     # 3. Workspace relative 'bin/' directory
     project_root = Path(__file__).resolve().parent.parent
@@ -50,10 +82,10 @@ def find_copybara_cmd() -> tuple[list[str] | None, str]:
 
     if bin_dir.exists():
         if IS_WINDOWS:
-            for win_wrapper in ["copybara.bat", "copybara.cmd", "copybara.exe"]:
+            for win_wrapper in ["copybara.bat", "copybara.cmd", "copybara.exe", "copybara.ps1"]:
                 wrapper_path = bin_dir / win_wrapper
                 if wrapper_path.exists():
-                    return [str(wrapper_path)], f"Workspace Local Wrapper ({wrapper_path})"
+                    return format_copybara_cmd(wrapper_path), f"Workspace Local Wrapper ({wrapper_path})"
 
         bash_wrapper = bin_dir / "copybara"
         if bash_wrapper.exists() and (not IS_WINDOWS or shutil.which("bash")):
@@ -77,8 +109,8 @@ def find_copybara_cmd() -> tuple[list[str] | None, str]:
     return None, "Not Found (Dry-run / Notice mode enabled)"
 
 
-def run_workflows(workflows, sky_path: Path, args, workflow_last_revs=None):
-    copybara_cmd, resolution_source = find_copybara_cmd()
+def run_workflows(workflows, sky_path: Path, args, workflow_last_revs=None, copybara_path=None, base_dir=None):
+    copybara_cmd, resolution_source = find_copybara_cmd(config_copybara_path=copybara_path, base_dir=base_dir)
     workflow_last_revs = workflow_last_revs or {}
 
     sky_path_str = normalize_path_for_git(sky_path)

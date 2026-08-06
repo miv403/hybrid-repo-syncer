@@ -12,6 +12,9 @@ from hybrid_syncer.git_utils import check_repo_exists, resolve_repo_url
 STARTER_MANIFEST = """# hybrid-syncer configuration manifest
 default_branch: "master"
 
+# Optional custom Copybara binary, .jar, .bat, or .ps1 executable path
+# copybara_path: "./bin/copybara_deploy.jar"
+
 authoring:
   default_email: "syncer@example.com"
   default_name: "Hybrid Syncer"
@@ -65,6 +68,11 @@ def normalize_manifest(data: dict, base_dir: Path = Path(".")) -> dict:
         "repositories": {},
         "targets": {}
     }
+
+    if "copybara_path" in data:
+        normalized["copybara_path"] = str(data["copybara_path"])
+    elif "copybara" in data and isinstance(data["copybara"], str):
+        normalized["copybara_path"] = str(data["copybara"])
 
     # 1. Register top-level repository aliases
     raw_repos = data.get("repositories", {})
@@ -205,6 +213,7 @@ def build_glob_expr(base_path: str, exclude_patterns: list[str] | None = None) -
 
 
 def generate_sky_config(manifest: dict, target_filter: str = "", dest_filter: str = "", config_path: str = "sync-manifest.yaml") -> str:
+    manifest = normalize_manifest(manifest, Path(config_path).parent.resolve())
     targets = manifest.get("targets", {})
     base_dir = Path(config_path).parent.resolve()
 
