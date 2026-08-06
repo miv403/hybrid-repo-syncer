@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# vim: set ft=bash :
+
+list=$(echo */)
+
+echo "WARNING! THIS SCRIPT WILL DELETE"
+echo "$list"
+echo "DIRECTORIES AND THEIR CONTENTS"
+echo -n "Do you want to continue? [Y/n] "
+read choice
+[[ ( $choice = "N" ) || ( $choice = "n" ) ]] && exit 0
+
+list=$(echo $list | tr " " "\n") #flattens the array
+
+for dir in ${list[*]}
+do
+  echo -n "delete $dir? [Y/n] "
+  read choice
+  if [[ ( $choice = "Y" ) || ( $choice = "y" ) ]]
+  then
+        rm $dir -rf
+  fi
+done
+
