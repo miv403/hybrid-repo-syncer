@@ -116,6 +116,7 @@ Creates a starter `sync-manifest.yaml` configuration file.
 ```bash
 ./hybrid-syncer.py init [-f/--force]
 ```
+
 - `-f, --force`: Overwrite existing `sync-manifest.yaml` if it already exists.
 
 #### 2. `generate`
@@ -124,27 +125,30 @@ Generates and prints or exports the Copybara Starlark (`copy.bara.sky`) configur
 ```bash
 ./hybrid-syncer.py generate [-o/--output PATH] [-t/--target NAME]
 ```
+
 - `-o, --output PATH`: Write Starlark output to a specified file path instead of stdout.
 - `-t, --target NAME`: Generate configuration only for a specific target mapping name.
 
-#### 3. `push`
+#### 3. `push` (from *target* to *destination*)
 Executes origin → hybrid workflows (`<target>-push`). **Note:** Target (`-t`) and destination (`-d`) specifications are **mandatory**. If `--target` is omitted, the CLI displays an informative error listing available targets and their corresponding destinations.
 
 ```bash
 ./hybrid-syncer.py push -t/--target NAME -d/--destination DEST_NAME [-n/--dry-run] [--init-history] [--skip-guards]
 ```
+
 - `-t, --target NAME` *(required)*: Specific target mapping name to push (e.g., `repo-1-a`).
 - `-d, --destination NAME` *(required)*: Specific destination name to push (e.g., `main`).
 - `-n, --dry-run`: Pass `--dry-run` to Copybara without modifying destination remotes.
 - `--init-history`: Pass `--init-history` to Copybara (required during the first migration run for any workflow).
 - `--skip-guards`: Skip pre-flight safety circuit breaker guard checks.
 
-#### 4. `pull`
+#### 4. `pull` (from *destination* to *target*)
 Executes hybrid → origin workflows (`<target>-pull`). **Note:** Target (`-t`) and destination (`-d`) specifications are **mandatory**. If `--target` is omitted, the CLI displays an informative error listing available targets and their corresponding destinations.
 
 ```bash
 ./hybrid-syncer.py pull -t/--target NAME -d/--destination DEST_NAME [-n/--dry-run] [--init-history] [--skip-guards]
 ```
+
 - `-t, --target NAME` *(required)*: Specific target mapping name to pull (e.g., `repo-1-a`).
 - `-d, --destination NAME` *(required)*: Specific destination name to pull (e.g., `main`).
 - `-n, --dry-run`: Pass `--dry-run` to Copybara.
@@ -159,6 +163,7 @@ Lists all configured target mappings and their destinations, or inspects destina
 # or
 ./hybrid-syncer.py targets [TARGET_NAME]
 ```
+
 - `[TARGET_NAME]` *(optional)*: Inspect destinations for a specific target. If omitted, lists all targets and their destinations. If the specified target is not found in the manifest, displays an error and lists all available targets.
 
 #### 6. `status`
@@ -167,6 +172,7 @@ Displays synchronization status, commit ahead counts, local uncommitted workspac
 ```bash
 ./hybrid-syncer.py status [-t/--target NAME] [-d/--destination NAME] [--check-unmapped]
 ```
+
 - `-t, --target NAME`: Filter status report to a specific target.
 - `-d, --destination NAME`: Filter status report to a specific destination name.
 - `--check-unmapped`: Analyze origin repositories for tracked or uncommitted orphan files living outside defined target paths.

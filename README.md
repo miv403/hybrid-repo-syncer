@@ -29,16 +29,23 @@
    # then install the pyaml
    pip install --no-index --find-links=packages/ pyaml
    ```
-2. **Copybara**: Ensure the `copybara` executable is in your system `PATH` (e.g. at `~/.local/bin/copybara` or `/usr/local/bin/copybara`).
+2. **Copybara**: Ensure the `copybara` executable is in your system `PATH` (e.g. at `~/.local/bin/copybara` or `/usr/local/bin/copybara`). Also you can explicitly include the `copybara`'s `PATH` in `sync-manifest.yaml` with  `copybara_path`.
    ```bash
    # to download http enforcement disabled patch use the script
    chmod +x install_copybara.sh
    ./install_copybara.sh
    ```
-3. **Git**: Installed and available in PATH.
+   ```yaml
+   # sync-manisfest.yaml
+   # ...
+   copybara_path: "./bin/copybara_deploy.jar"
+   # ...
+   ```
+3. **Git**: Installed and available in `PATH`.
 
 Make `hybrid-syncer.py` executable:
 ```bash
 chmod +x hybrid-syncer.py
 ```
 
+For more information please refer to `DOCS.md`.
