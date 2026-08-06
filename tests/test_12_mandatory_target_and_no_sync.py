@@ -90,10 +90,52 @@ def main():
     pull_has_mandatory_err = "mandatory" in output_pull.lower() or "-t / --target" in output_pull
 
     # -------------------------------------------------------------------------
-    # STEP 3: REMOVED SYNC COMMAND TEST
+    # STEP 3: LIST COMMAND TEST
     # -------------------------------------------------------------------------
     print_step_header(
         3,
+        "List Subcommand Verification",
+        "Verify `hybrid-syncer.py list`, `hybrid-syncer.py list <target>`, and non-existent target error output."
+    )
+
+    # 3a. List all targets
+    res_list_all = subprocess.run(
+        [sys.executable, str(syncer_py), "list"],
+        cwd=project_root,
+        capture_output=True,
+        text=True
+    )
+    out_list_all = res_list_all.stdout + res_list_all.stderr
+    print_diagnostic(f"List all return code: {res_list_all.returncode}", out_list_all)
+    list_all_ok = res_list_all.returncode == 0 and "repo-1-a" in out_list_all and "Destinations" in out_list_all
+
+    # 3b. List specific target
+    res_list_target = subprocess.run(
+        [sys.executable, str(syncer_py), "list", "repo-1-a"],
+        cwd=project_root,
+        capture_output=True,
+        text=True
+    )
+    out_list_target = res_list_target.stdout + res_list_target.stderr
+    print_diagnostic(f"List target return code: {res_list_target.returncode}", out_list_target)
+    list_target_ok = res_list_target.returncode == 0 and "Target: repo-1-a" in out_list_target and "main" in out_list_target
+
+    # 3c. List non-existent target
+    res_list_invalid = subprocess.run(
+        [sys.executable, str(syncer_py), "list", "invalid-target-xyz"],
+        cwd=project_root,
+        capture_output=True,
+        text=True
+    )
+    out_list_invalid = res_list_invalid.stdout + res_list_invalid.stderr
+    print_diagnostic(f"List invalid target return code: {res_list_invalid.returncode}", out_list_invalid)
+    list_invalid_ok = res_list_invalid.returncode != 0 and "not found in manifest" in out_list_invalid and "repo-1-a" in out_list_invalid
+
+    # -------------------------------------------------------------------------
+    # STEP 4: REMOVED SYNC COMMAND TEST
+    # -------------------------------------------------------------------------
+    print_step_header(
+        4,
         "Removed Sync Command Verification",
         "Verify `hybrid-syncer.py sync` is invalid and returns command parse error."
     )
@@ -111,12 +153,12 @@ def main():
     sync_invalid = res_sync.returncode != 0 and ("invalid choice" in output_sync or "unrecognized" in output_sync or "invalid" in output_sync)
 
     # -------------------------------------------------------------------------
-    # STEP 4: VERIFICATION & ASSERTIONS
+    # STEP 5: VERIFICATION & ASSERTIONS
     # -------------------------------------------------------------------------
     print_step_header(
-        4,
+        5,
         "Verification & Assertions",
-        "Summary of assertions for target requirement and sync removal."
+        "Summary of assertions for target requirement, list command, and sync removal."
     )
 
     print_result_row(
@@ -126,9 +168,9 @@ def main():
     )
 
     print_result_row(
-        "2. Error output displays mandatory target message",
-        has_mandatory_err,
-        "Found target requirement warning"
+        "2. Error output displays mandatory target message and lists destinations",
+        has_mandatory_err and "Destinations" in output_push,
+        "Found target and destination requirement warning"
     )
 
     print_result_row(
@@ -156,13 +198,31 @@ def main():
     )
 
     print_result_row(
-        "7. Sync subcommand is removed and rejected",
+        "7. `list` lists all targets and their destinations",
+        list_all_ok,
+        f"Return code {res_list_all.returncode}"
+    )
+
+    print_result_row(
+        "8. `list <target-name>` lists specific target destinations",
+        list_target_ok,
+        f"Return code {res_list_target.returncode}"
+    )
+
+    print_result_row(
+        "9. `list <invalid-target>` reports missing target and lists available targets",
+        list_invalid_ok,
+        f"Return code {res_list_invalid.returncode}"
+    )
+
+    print_result_row(
+        "10. Sync subcommand is removed and rejected",
         sync_invalid,
         f"Return code {res_sync.returncode}"
     )
 
     print_result_row(
-        "8. Push command fails when destination (-d) is missing",
+        "11. Push command fails when destination (-d) is missing",
         push_nodest_failed and has_dest_mandatory_err,
         f"Return code {res_push_nodest.returncode}"
     )
@@ -170,6 +230,7 @@ def main():
     all_passed = (
         push_failed and has_mandatory_err and has_yaml_path and
         has_available_targets and has_sample_usage and pull_failed and
+        list_all_ok and list_target_ok and list_invalid_ok and
         sync_invalid and push_nodest_failed and has_dest_mandatory_err
     )
 

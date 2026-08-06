@@ -127,34 +127,47 @@ Generates and prints or exports the Copybara Starlark (`copy.bara.sky`) configur
 - `-t, --target NAME`: Generate configuration only for a specific target mapping name.
 
 #### 3. `push`
-Executes origin → hybrid workflows (`<target>-push`). **Note:** Target specification (`-t / --target`) is **mandatory**.
+Executes origin → hybrid workflows (`<target>-push`). **Note:** Target (`-t`) and destination (`-d`) specifications are **mandatory**. If `--target` is omitted, the CLI displays an informative error listing available targets and their corresponding destinations.
 
 ```bash
-./hybrid-syncer.py push -t/--target NAME [-n/--dry-run] [--init-history] [--skip-guards]
+./hybrid-syncer.py push -t/--target NAME -d/--destination DEST_NAME [-n/--dry-run] [--init-history] [--skip-guards]
 ```
 - `-t, --target NAME` *(required)*: Specific target mapping name to push (e.g., `repo-1-a`).
+- `-d, --destination NAME` *(required)*: Specific destination name to push (e.g., `main`).
 - `-n, --dry-run`: Pass `--dry-run` to Copybara without modifying destination remotes.
 - `--init-history`: Pass `--init-history` to Copybara (required during the first migration run for any workflow).
 - `--skip-guards`: Skip pre-flight safety circuit breaker guard checks.
 
 #### 4. `pull`
-Executes hybrid → origin workflows (`<target>-pull`). **Note:** Target specification (`-t / --target`) is **mandatory**.
+Executes hybrid → origin workflows (`<target>-pull`). **Note:** Target (`-t`) and destination (`-d`) specifications are **mandatory**. If `--target` is omitted, the CLI displays an informative error listing available targets and their corresponding destinations.
 
 ```bash
-./hybrid-syncer.py pull -t/--target NAME [-n/--dry-run] [--init-history] [--skip-guards]
+./hybrid-syncer.py pull -t/--target NAME -d/--destination DEST_NAME [-n/--dry-run] [--init-history] [--skip-guards]
 ```
 - `-t, --target NAME` *(required)*: Specific target mapping name to pull (e.g., `repo-1-a`).
+- `-d, --destination NAME` *(required)*: Specific destination name to pull (e.g., `main`).
 - `-n, --dry-run`: Pass `--dry-run` to Copybara.
 - `--init-history`: Pass `--init-history` to Copybara for first-time pull migration setups.
 - `--skip-guards`: Skip pre-flight safety circuit breaker guard checks.
+
+#### 5. `list` (or `targets`)
+Lists all configured target mappings and their destinations, or inspects destinations for a specific target.
+
+```bash
+./hybrid-syncer.py list [TARGET_NAME]
+# or
+./hybrid-syncer.py targets [TARGET_NAME]
+```
+- `[TARGET_NAME]` *(optional)*: Inspect destinations for a specific target. If omitted, lists all targets and their destinations. If the specified target is not found in the manifest, displays an error and lists all available targets.
 
 #### 6. `status`
 Displays synchronization status, commit ahead counts, local uncommitted workspace changes, divergence warnings, and unmapped path reports.
 
 ```bash
-./hybrid-syncer.py status [-t/--target NAME] [--check-unmapped]
+./hybrid-syncer.py status [-t/--target NAME] [-d/--destination NAME] [--check-unmapped]
 ```
 - `-t, --target NAME`: Filter status report to a specific target.
+- `-d, --destination NAME`: Filter status report to a specific destination name.
 - `--check-unmapped`: Analyze origin repositories for tracked or uncommitted orphan files living outside defined target paths.
 
 #### 7. `doctor` (or `detector`)
@@ -165,95 +178,6 @@ Runs a manifest health check to detect exact target path clashes, nested prefix 
 # or
 ./hybrid-syncer.py detector
 ```
-
----
-
-## Test Cases & Verification Scenarios
-
-### Test Case 1: Environment Setup and Starter Manifest Creation
-**Goal**: Initialize a new project manifest and initialize sample test repositories.
-
-```bash
-# 1. Initialize sample git repositories
-./sample-repos/init-repo.sh 1
-./sample-repos/init-repo.sh 2
-./sample-repos/init-hybrid.sh 1
-
-# 2. Create starter manifest (force overwrite if existing)
-./hybrid-syncer.py init -f
-```
-**Expected Outcome**: `sync-manifest.yaml` is created with standard target mappings for `repo-1-a`, `repo-1-b`, and `repo-2-a`.
-
----
-
-### Test Case 2: Starlark Configuration Generation & Filtering
-**Goal**: Verify generated Copybara Starlark syntax and target filtering options.
-
-```bash
-# Preview full Starlark config output
-./hybrid-syncer.py generate
-
-# Preview Starlark config for target 'repo-1-a' only
-./hybrid-syncer.py generate -t repo-1-a
-
-# Export generated config to a file
-./hybrid-syncer.py generate -o /tmp/copy.bara.sky
-```
-**Expected Outcome**: Valid Starlark `core.workflow()` blocks with matching `origin_files`, `destination_files`, and `core.move()` transformations are displayed or written to file.
-
----
-
-### Test Case 3: Dry-Run Push Simulation
-**Goal**: Validate workflow execution without modifying git remotes.
-
-```bash
-./hybrid-syncer.py -v push -t repo-1-a -n --init-history
-```
-**Expected Outcome**: Copybara runs the push workflow for target `repo-1-a` in dry-run mode, executing transformations locally without pushing commits to the hybrid remote.
-
----
-
-### Test Case 4: Initial Origin → Hybrid Migration (`push`)
-**Goal**: Sync directory contents from origin repositories into the hybrid repository for target `repo-1-a`.
-
-```bash
-./hybrid-syncer.py -v push -t repo-1-a --init-history
-```
-**Expected Outcome**: Files from `sample-repos/repo-1` (folders `a` and `b`) and `sample-repos/repo-2` (folder `a`) are synced into `sample-repos/hybrid/repo-1/` and `sample-repos/hybrid/repo-2/`.
-
----
-
-### Test Case 5: Multi-Column Repository Status (`status`)
-**Goal**: View comprehensive sync status, commit ahead counts, local changes, and unmapped path reports across targets.
-
-```bash
-# Display basic status table
-./hybrid-syncer.py status
-
-# Display status with unmapped path & orphan file analysis
-./hybrid-syncer.py status --check-unmapped
-```
-**Expected Outcome**: Multi-column table output detailing `Target`, `Origin Path`, `Hybrid Path`, `Origin Status`, `Hybrid Status`, and `Sync Status`, along with orphan file listings.
-
----
-
-### Test Case 6: Manifest Doctor Health Detector (`doctor` / `detector`)
-**Goal**: Detect manifest configuration mistakes, path clashes, nested prefix overlaps, and missing repositories on disk.
-
-```bash
-./hybrid-syncer.py doctor
-```
-**Expected Outcome**: Manifest health check outputs `✔ All 3 manifest target(s) passed health checks cleanly` or lists detailed error/warning diagnostics.
-
----
-
-### Test Case 7: Target Exclusion Sync (`exclude`)
-**Goal**: Exclude specific files and directories (e.g. `**/*.tmp`, `.github/**`) from sync migrations.
-
-```bash
-./hybrid-syncer.py generate -t repo-1-a
-```
-**Expected Outcome**: Generated Starlark `origin_files` expression includes `glob(["a/**"], exclude = ["a/*.tmp", "a/**/*.tmp", "a/.github/**"])`.
 
 ---
 

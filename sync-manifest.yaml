@@ -20,6 +20,9 @@ targets:
       - name: main
         repo: hybrid
         path: "repo-1/a"
+      - name: repo-2
+        repo: repo2
+        path: "repo-1/a"
 
   repo-1-b:
     origin:
@@ -28,6 +31,9 @@ targets:
     destinations:
       - name: main
         repo: hybrid
+        path: "repo-1/b"
+      - name: repo-2
+        repo: repo2
         path: "repo-1/b"
 
   repo-2-a:

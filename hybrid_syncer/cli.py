@@ -75,14 +75,22 @@ def handle_execution(args, repo_cache=None):
 
     if not args.target:
         config_path = Path(args.config).resolve()
-        available_targets = list(targets.keys())
-        available_str = "\n".join(f"  - {t}" for t in available_targets) if available_targets else "  (No targets defined in manifest)"
-        sample_target = available_targets[0] if available_targets else "<target-name>"
+        target_lines = []
+        for t_name, t_cfg in targets.items():
+            dests = t_cfg.get("destinations", [])
+            if dests:
+                d_info = ", ".join(f"{d['name']} (Repo: {d['repo']}, Path: {d['path'] or '.'})" for d in dests)
+                target_lines.append(f"  - {t_name} (Destinations: {d_info})")
+            else:
+                target_lines.append(f"  - {t_name} (No destinations defined)")
+        available_str = "\n".join(target_lines) if target_lines else "  (No targets defined in manifest)"
+        sample_target = list(targets.keys())[0] if targets else "<target-name>"
+        sample_dest = targets[sample_target].get("destinations", [{}])[0].get("name", "main") if (targets and targets[sample_target].get("destinations")) else "main"
         msg = (
             f"Target specification (-t / --target) is mandatory for '{args.command}' command.\n"
             f"Configuration manifest file: {config_path}\n"
-            f"Available target(s) in manifest:\n{available_str}\n\n"
-            f"Sample usage:\n  python hybrid-syncer.py {args.command} -t {sample_target} -d main"
+            f"Available target(s) and destination(s) in manifest:\n{available_str}\n\n"
+            f"Sample usage:\n  python hybrid-syncer.py {args.command} -t {sample_target} -d {sample_dest}"
         )
         raise ManifestError(msg)
 
@@ -346,6 +354,64 @@ def handle_doctor(args, repo_cache=None):
         raise ManifestError(f"Manifest health check failed with {num_errors} error(s).")
 
 
+def handle_list(args, repo_cache=None):
+    manifest = load_manifest(args.config)
+    targets = manifest.get("targets", {})
+    config_path = Path(args.config).resolve()
+
+    target_name = getattr(args, "target_pos", None) or getattr(args, "target_flag", None) or getattr(args, "target", None)
+
+    if target_name:
+        if target_name not in targets:
+            available_targets = list(targets.keys())
+            available_str = "\n".join(f"  - {t}" for t in available_targets) if available_targets else "  (No targets defined in manifest)"
+            msg = (
+                f"Target '{target_name}' not found in manifest.\n"
+                f"Configuration manifest file: {config_path}\n"
+                f"Available target(s) in manifest:\n{available_str}"
+            )
+            raise ManifestError(msg)
+
+        t_cfg = targets[target_name]
+        destinations = t_cfg.get("destinations", [])
+        origin_cfg = t_cfg.get("origin", {})
+
+        print(f"\nTarget: {target_name}", file=sys.stdout)
+        print(f"  Origin Repo : {origin_cfg.get('repo', 'N/A')} ({origin_cfg.get('url', '')})", file=sys.stdout)
+        print(f"  Origin Path : {origin_cfg.get('path') or '.'}", file=sys.stdout)
+        print(f"  Destinations ({len(destinations)}):", file=sys.stdout)
+        if destinations:
+            for d in destinations:
+                d_name = d.get("name", "main")
+                d_repo = d.get("repo", "hybrid")
+                d_url = d.get("url", "")
+                d_path = d.get("path") or "."
+                d_branch = d.get("branch", "")
+                print(f"    • {d_name}:", file=sys.stdout)
+                print(f"        Repo   : {d_repo} ({d_url})", file=sys.stdout)
+                print(f"        Path   : {d_path}", file=sys.stdout)
+                if d_branch:
+                    print(f"        Branch : {d_branch}", file=sys.stdout)
+        else:
+            print("    (No destinations defined)", file=sys.stdout)
+        print("", file=sys.stdout)
+
+    else:
+        print(f"\nAvailable Target(s) and Destination(s) in manifest ({config_path}):", file=sys.stdout)
+        print("-" * 80, file=sys.stdout)
+        if not targets:
+            print("  (No targets defined in manifest)", file=sys.stdout)
+        else:
+            for t_name, t_cfg in targets.items():
+                origin_cfg = t_cfg.get("origin", {})
+                destinations = t_cfg.get("destinations", [])
+                d_str = "\n".join(f"        • {d['name']} (Repo: {d['repo']}, Path: {d['path'] or '.'})" for d in destinations) if destinations else "        (No destinations defined)"
+                print(f"  Target: {t_name}", file=sys.stdout)
+                print(f"      Origin       : Repo: {origin_cfg.get('repo', 'N/A')}, Path: {origin_cfg.get('path') or '.'}", file=sys.stdout)
+                print(f"      Destinations :\n{d_str}", file=sys.stdout)
+                print("", file=sys.stdout)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hybrid-syncer",
@@ -486,6 +552,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Force overwrite of existing sync-manifest.yaml"
     )
     init_parser.set_defaults(func=handle_init)
+
+    # Subcommand: list / targets
+    list_parser = subparsers.add_parser(
+        "list",
+        aliases=["targets"],
+        help="List available target mappings or inspect destinations for a specific target"
+    )
+    list_parser.add_argument(
+        "target_pos",
+        nargs="?",
+        default=None,
+        metavar="TARGET",
+        help="Target name to inspect destinations for (optional)"
+    )
+    list_parser.add_argument(
+        "-t", "--target",
+        type=str,
+        dest="target_flag",
+        help="Target name to inspect destinations for"
+    )
+    list_parser.set_defaults(func=handle_list)
 
     return parser
 

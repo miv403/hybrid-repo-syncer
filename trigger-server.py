@@ -64,17 +64,22 @@ def execute_sync():
             return
 
         for target in targets:
-            res = subprocess.run(
-                ["python3", syncer_py, "-v", "push", "-t", target],
-                capture_output=True,
-                text=True
-            )
-            if res.stdout:
-                print(res.stdout)
-            if res.returncode != 0:
-                print(f"[ERROR] Push for target '{target}' failed:\n{res.stderr}", file=sys.stderr)
-            else:
-                print(f"[TRIGGER] Hybrid push for target '{target}' completed successfully.")
+            t_cfg = t_data.get(target, {})
+            destinations = t_cfg.get("destinations", []) if isinstance(t_cfg, dict) else []
+            dest_names = [d["name"] for d in destinations if isinstance(d, dict) and "name" in d] if destinations else ["main"]
+
+            for dest_name in dest_names:
+                res = subprocess.run(
+                    ["python3", syncer_py, "-v", "push", "-t", target, "-d", dest_name],
+                    capture_output=True,
+                    text=True
+                )
+                if res.stdout:
+                    print(res.stdout)
+                if res.returncode != 0:
+                    print(f"[ERROR] Push for target '{target}' destination '{dest_name}' failed:\n{res.stderr}", file=sys.stderr)
+                else:
+                    print(f"[TRIGGER] Hybrid push for target '{target}' destination '{dest_name}' completed successfully.")
     finally:
         sync_lock.release()
 
