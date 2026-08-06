@@ -30,6 +30,7 @@ from hybrid_syncer.git_utils import (
     run_git,
 )
 from hybrid_syncer.guards import run_preflight_guards
+from hybrid_syncer.logger import setup_logging
 from hybrid_syncer.temp_manager import TempRepoCache
 
 
@@ -377,6 +378,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print verbose output and raw Copybara execution logs"
     )
     parser.add_argument(
+        "-d", "--debug",
+        action="store_true",
+        help="Enable debug mode to show executed Git, Copybara, and low-level commands"
+    )
+    parser.add_argument(
         "-w", "--workdir",
         type=Path,
         default=None,
@@ -484,6 +490,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main():
     parser = build_parser()
     args = parser.parse_args()
+
+    debug = getattr(args, "debug", False)
+    verbose = getattr(args, "verbose", False) or debug
+    setup_logging(verbose=verbose, debug=debug)
 
     try:
         with TempRepoCache() as repo_cache:

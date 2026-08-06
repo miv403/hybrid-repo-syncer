@@ -22,13 +22,13 @@ from hybrid_syncer.git_utils import (
 )
 
 
+from hybrid_syncer.logger import logger
 from hybrid_syncer.temp_manager import TempRepoCache
 
 
 def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, manifest: dict, config_path: str, args, repo_cache: TempRepoCache | dict | None = None) -> bool:
     if getattr(args, "skip_guards", False):
-        if args.verbose:
-            print(f"[VERBOSE] Guard checks explicitly skipped via --skip-guards for {target_name} ({direction})", file=sys.stderr)
+        logger.info("[VERBOSE] Guard checks explicitly skipped via --skip-guards for %s (%s)", target_name, direction)
         return True
 
     base_dir = Path(config_path).parent.resolve()
@@ -62,8 +62,7 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
     source_last_sync_sha, dest_commit_sha = find_effective_sync_point(source_url, source_path, dest_url, dest_path, repo_cache)
 
     if not source_last_sync_sha or not dest_commit_sha:
-        if args.verbose:
-            print(f"[VERBOSE] No previous sync history (GitOrigin-RevId) found between {source_name} and {dest_name} for '{target_name}'. Skipping history/divergence checks.", file=sys.stderr)
+        logger.info("[VERBOSE] No previous sync history (GitOrigin-RevId) found between %s and %s for '%s'. Skipping history/divergence checks.", source_name, dest_name, target_name)
         return True
 
     # --- Guard Check 1: Ancestry & History Check ---
@@ -90,7 +89,6 @@ def run_preflight_guards(target_name: str, direction: str, target_cfg: dict, man
         if not patch_ok:
             raise PatchApplyError(target_name, direction, source_name, dest_name, patch_err)
 
-    if args.verbose:
-        print(f"[VERBOSE] All pre-flight guard checks PASSED for '{target_name}' ({direction}).", file=sys.stderr)
+    logger.info("[VERBOSE] All pre-flight guard checks PASSED for '%s' (%s).", target_name, direction)
 
     return True

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from hybrid_syncer.errors import ManifestError, RepoAccessError
+from hybrid_syncer.logger import logger
 from hybrid_syncer.temp_manager import TempRepoCache, get_repo_path
 
 
@@ -52,6 +53,9 @@ def run_git(args: list, cwd=None) -> tuple[int, str, str]:
     
     if cwd:
         cwd = sanitize_git_arg(cwd)
+        logger.debug("Executing git command: git %s (cwd=%s)", " ".join(sanitized_args), cwd)
+    else:
+        logger.debug("Executing git command: git %s", " ".join(sanitized_args))
         
     try:
         res = subprocess.run(

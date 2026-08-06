@@ -10,6 +10,7 @@ from pathlib import Path
 
 from hybrid_syncer.errors import CopybaraExecutionError
 from hybrid_syncer.git_utils import IS_WINDOWS, normalize_path_for_git
+from hybrid_syncer.logger import logger
 
 
 def find_copybara_cmd() -> tuple[list[str] | None, str]:
@@ -82,23 +83,22 @@ def run_workflows(workflows, sky_path: Path, args, workflow_last_revs=None):
 
     sky_path_str = normalize_path_for_git(sky_path)
 
-    if args.verbose:
-        print(f"[VERBOSE] Copybara binary resolution mode: {resolution_source}", file=sys.stderr)
-        if copybara_cmd:
-            print(f"[VERBOSE] Copybara command line: {' '.join(copybara_cmd)}", file=sys.stderr)
-        print(f"[VERBOSE] Prepared Starlark spec at: {sky_path_str}", file=sys.stderr)
-        print(f"[VERBOSE] Target workflows to run: {', '.join(workflows)}", file=sys.stderr)
+    logger.info("[VERBOSE] Copybara binary resolution mode: %s", resolution_source)
+    if copybara_cmd:
+        logger.debug("Copybara command line: %s", " ".join(copybara_cmd))
+    logger.info("[VERBOSE] Prepared Starlark spec at: %s", sky_path_str)
+    logger.info("[VERBOSE] Target workflows to run: %s", ", ".join(workflows))
 
     if not copybara_cmd:
-        print(f"[NOTICE] Copybara binary 'copybara' or 'copybara_deploy.jar' was not found.", file=sys.stderr)
-        print(f"[NOTICE] Resolution status: {resolution_source}", file=sys.stderr)
-        print(f"Temporary Starlark file generated at: {sky_path_str}", file=sys.stderr)
-        print("Would execute the following workflows:", file=sys.stderr)
+        logger.info("[NOTICE] Copybara binary 'copybara' or 'copybara_deploy.jar' was not found.")
+        logger.info("[NOTICE] Resolution status: %s", resolution_source)
+        logger.info("Temporary Starlark file generated at: %s", sky_path_str)
+        logger.info("Would execute the following workflows:")
         for wf in workflows:
             dry_flag = " --dry-run" if args.dry_run else ""
             init_flag = " --init-history" if getattr(args, "init_history", False) else ""
             last_rev_str = f" {workflow_last_revs.get(wf)}" if workflow_last_revs.get(wf) else ""
-            print(f"  $ copybara migrate {sky_path_str} {wf}{last_rev_str}{dry_flag}{init_flag}", file=sys.stderr)
+            logger.info("  $ copybara migrate %s %s%s%s%s", sky_path_str, wf, last_rev_str, dry_flag, init_flag)
         return
 
     for wf in workflows:
@@ -113,15 +113,15 @@ def run_workflows(workflows, sky_path: Path, args, workflow_last_revs=None):
         if getattr(args, "init_history", False):
             cmd.append("--init-history")
 
-        if args.verbose:
-            print(f"[VERBOSE] Executing: {' '.join(cmd)}", file=sys.stderr)
+        logger.debug("Executing Copybara command: %s", " ".join(cmd))
 
         try:
             use_shell = IS_WINDOWS and (cmd[0].endswith(".bat") or cmd[0].endswith(".cmd"))
+            is_verbose = args.verbose or getattr(args, "debug", False)
             result = subprocess.run(
                 cmd,
-                stdout=subprocess.PIPE if not args.verbose else None,
-                stderr=subprocess.PIPE if not args.verbose else None,
+                stdout=subprocess.PIPE if not is_verbose else None,
+                stderr=subprocess.PIPE if not is_verbose else None,
                 text=True,
                 shell=use_shell
             )
