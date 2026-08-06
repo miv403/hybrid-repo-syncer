@@ -41,7 +41,7 @@ def main():
         reset_sample_repos(project_root)
 
     for target in ["repo-1-a", "repo-1-b", "repo-2-a"]:
-        run_cmd(f"python3 {syncer_py} push -t {target} --init-history", cwd=project_root)
+        run_cmd(f"python3 {syncer_py} push -t {target} -d main --init-history", cwd=project_root, check=False)
 
     status_step1 = run_cmd(f"python3 {syncer_py} status", cwd=project_root)
     out_s1 = status_step1.stdout + status_step1.stderr

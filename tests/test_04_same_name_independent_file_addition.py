@@ -41,7 +41,7 @@ def main():
         reset_sample_repos(project_root)
 
     syncer_py = project_root / "hybrid-syncer.py"
-    init_push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a --init-history", cwd=project_root)
+    init_push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a -d main --init-history", cwd=project_root)
     print_diagnostic("hybrid-syncer.py push --init-history output", init_push_res.stdout)
 
     print_file_tree(origin_dir, "Origin Repo (repo-1)")
@@ -96,10 +96,10 @@ def main():
     print_step_header(
         4,
         "Execution",
-        "Run `hybrid-syncer.py push -t repo-1-a` to attempt syncing origin's feature.py into hybrid."
+        "Run `hybrid-syncer.py push -t repo-1-a -d main` to attempt syncing origin's feature.py into hybrid."
     )
 
-    push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a", cwd=project_root, check=False)
+    push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a -d main", cwd=project_root, check=False)
 
     stdout_msg = push_res.stdout if push_res.stdout else "(no stdout)"
     stderr_msg = push_res.stderr if push_res.stderr else "(no stderr)"

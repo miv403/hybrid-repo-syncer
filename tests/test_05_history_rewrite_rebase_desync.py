@@ -46,7 +46,7 @@ def main():
     run_cmd("git push origin master", cwd=origin_dir)
 
     syncer_py = project_root / "hybrid-syncer.py"
-    push_res_1 = run_cmd(f"python3 {syncer_py} push -t repo-1-a --init-history", cwd=project_root)
+    push_res_1 = run_cmd(f"python3 {syncer_py} push -t repo-1-a -d main --init-history", cwd=project_root)
     print_diagnostic("hybrid-syncer.py push output", push_res_1.stdout)
 
     print_git_log(origin_dir, "Origin Repo (baseline)")
@@ -78,10 +78,10 @@ def main():
     print_step_header(
         3,
         "Execution",
-        "Run `hybrid-syncer.py push -t repo-1-a` to attempt sync after history rewrite."
+        "Run `hybrid-syncer.py push -t repo-1-a -d main` to attempt sync after history rewrite."
     )
 
-    push_res_2 = run_cmd(f"python3 {syncer_py} push -t repo-1-a", cwd=project_root, check=False)
+    push_res_2 = run_cmd(f"python3 {syncer_py} push -t repo-1-a -d main", cwd=project_root, check=False)
 
     stdout_msg = push_res_2.stdout if push_res_2.stdout else "(no stdout)"
     stderr_msg = push_res_2.stderr if push_res_2.stderr else "(no stderr)"

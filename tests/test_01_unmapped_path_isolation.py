@@ -42,7 +42,7 @@ def main():
         reset_sample_repos(project_root)
 
     syncer_py = project_root / "hybrid-syncer.py"
-    init_push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a --init-history", cwd=project_root)
+    init_push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a -d main --init-history", cwd=project_root)
     print_diagnostic("hybrid-syncer.py push --init-history output", init_push_res.stdout + init_push_res.stderr)
 
     print_file_tree(origin_dir, "Origin Repo (repo-1)")
@@ -85,11 +85,11 @@ def main():
     print_step_header(
         3,
         "Execution",
-        "Run `hybrid-syncer.py pull -t repo-1-a` to sync target `repo-1-a` from hybrid to origin."
+        "Run `hybrid-syncer.py pull -t repo-1-a -d main` to sync target `repo-1-a` from hybrid to origin."
     )
 
-    pull_res = run_cmd(f"python3 {syncer_py} pull -t repo-1-a --init-history", cwd=project_root)
-    print_diagnostic("hybrid-syncer.py pull -t repo-1-a --init-history output", pull_res.stdout + pull_res.stderr)
+    pull_res = run_cmd(f"python3 {syncer_py} pull -t repo-1-a -d main --init-history", cwd=project_root)
+    print_diagnostic("hybrid-syncer.py pull -t repo-1-a -d main --init-history output", pull_res.stdout + pull_res.stderr)
 
     # Make origin worktree fetch/pull latest changes from bare origin repo-1.git if needed
     run_cmd("git pull origin master", cwd=origin_dir, check=False)
@@ -116,8 +116,8 @@ def main():
     origin_unmapped_file = origin_dir / "c" / "unmapped.txt"
     check_2_pass = not origin_c_dir.exists() and not origin_unmapped_file.exists()
 
-    subsequent_push = run_cmd(f"python3 {syncer_py} push -t repo-1-a", cwd=project_root, check=False)
-    subsequent_pull = run_cmd(f"python3 {syncer_py} pull -t repo-1-a", cwd=project_root, check=False)
+    subsequent_push = run_cmd(f"python3 {syncer_py} push -t repo-1-a -d main", cwd=project_root, check=False)
+    subsequent_pull = run_cmd(f"python3 {syncer_py} pull -t repo-1-a -d main", cwd=project_root, check=False)
     hybrid_unmapped_exists = unmapped_file.exists()
     check_3_pass = (
         subsequent_push.returncode in (0, 4, 7)

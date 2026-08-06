@@ -1,29 +1,40 @@
 # hybrid-syncer configuration manifest
-hybrid_repo: "./sample-repos/hybrid"
 default_branch: "master"
 
 authoring:
   default_email: "syncer@example.com"
   default_name: "Hybrid Syncer"
 
+# Top-level repository alias registry
+repositories:
+  repo1: "./sample-repos/repo-1.git"
+  repo2: "./sample-repos/repo-2.git"
+  hybrid: "./sample-repos/hybrid"
+
 targets:
   repo-1-a:
     origin:
-      url: "./sample-repos/repo-1.git"
+      repo: repo1
       path: "a"
-    hybrid:
-      path: "repo-1/a"
+    destinations:
+      - name: main
+        repo: hybrid
+        path: "repo-1/a"
 
   repo-1-b:
     origin:
-      url: "./sample-repos/repo-1.git"
+      repo: repo1
       path: "b"
-    hybrid:
-      path: "repo-1/b"
+    destinations:
+      - name: main
+        repo: hybrid
+        path: "repo-1/b"
 
   repo-2-a:
     origin:
-      url: "./sample-repos/repo-2.git"
+      repo: repo2
       path: "a"
-    hybrid:
-      path: "repo-2/a"
+    destinations:
+      - name: main
+        repo: hybrid
+        path: "repo-2/a"

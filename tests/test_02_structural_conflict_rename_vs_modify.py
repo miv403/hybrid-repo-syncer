@@ -42,7 +42,7 @@ def main():
         reset_sample_repos(project_root)
 
     syncer_py = project_root / "hybrid-syncer.py"
-    init_push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a --init-history", cwd=project_root)
+    init_push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a -d main --init-history", cwd=project_root)
     print_diagnostic("hybrid-syncer.py push --init-history output", init_push_res.stdout)
 
     print_file_tree(origin_dir, "Origin Repo (repo-1)")
@@ -97,7 +97,7 @@ def main():
         "Run `hybrid-syncer.py sync -t repo-1-a` to execute bi-directional sync under structural conflict."
     )
 
-    sync_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a --init-history", cwd=project_root, check=False)
+    sync_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a -d main --init-history", cwd=project_root, check=False)
 
     stdout_msg = sync_res.stdout if sync_res.stdout else "(no stdout)"
     stderr_msg = sync_res.stderr if sync_res.stderr else "(no stderr)"

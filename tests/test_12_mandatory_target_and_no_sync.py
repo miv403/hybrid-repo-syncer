@@ -53,6 +53,21 @@ def main():
     has_sample_usage = "sample usage" in output_push.lower()
 
     # -------------------------------------------------------------------------
+    # STEP 1B: PUSH WITHOUT DESTINATION TEST
+    # -------------------------------------------------------------------------
+    res_push_nodest = subprocess.run(
+        [sys.executable, str(syncer_py), "push", "-t", "repo-1-a"],
+        cwd=project_root,
+        capture_output=True,
+        text=True
+    )
+    out_nodest = res_push_nodest.stderr + res_push_nodest.stdout
+    print_diagnostic(f"Push without destination return code: {res_push_nodest.returncode}", out_nodest)
+
+    push_nodest_failed = res_push_nodest.returncode != 0
+    has_dest_mandatory_err = "destination specification" in out_nodest.lower() or "-d / --destination" in out_nodest
+
+    # -------------------------------------------------------------------------
     # STEP 2: PULL WITHOUT TARGET TEST
     # -------------------------------------------------------------------------
     print_step_header(
@@ -146,10 +161,16 @@ def main():
         f"Return code {res_sync.returncode}"
     )
 
+    print_result_row(
+        "8. Push command fails when destination (-d) is missing",
+        push_nodest_failed and has_dest_mandatory_err,
+        f"Return code {res_push_nodest.returncode}"
+    )
+
     all_passed = (
         push_failed and has_mandatory_err and has_yaml_path and
         has_available_targets and has_sample_usage and pull_failed and
-        sync_invalid
+        sync_invalid and push_nodest_failed and has_dest_mandatory_err
     )
 
     if all_passed:

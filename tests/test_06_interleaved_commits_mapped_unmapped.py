@@ -40,7 +40,7 @@ def main():
         reset_sample_repos(project_root)
 
     syncer_py = project_root / "hybrid-syncer.py"
-    init_push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a --init-history", cwd=project_root)
+    init_push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a -d main --init-history", cwd=project_root)
     print_diagnostic("hybrid-syncer.py push --init-history output", init_push_res.stdout)
 
     print_file_tree(origin_dir, "Origin Repo (repo-1)")
@@ -93,10 +93,10 @@ def main():
     print_step_header(
         3,
         "Execution",
-        "Run `hybrid-syncer.py push -t repo-1-a` to execute Copybara migration in ITERATIVE mode."
+        "Run `hybrid-syncer.py push -t repo-1-a -d main` to execute Copybara migration in ITERATIVE mode."
     )
 
-    push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a", cwd=project_root)
+    push_res = run_cmd(f"python3 {syncer_py} push -t repo-1-a -d main", cwd=project_root)
     print_diagnostic("hybrid-syncer.py push output", push_res.stdout)
 
     print_git_log(hybrid_dir, "Hybrid Repo (after iterative push)", count=5)
