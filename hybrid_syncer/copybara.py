@@ -149,18 +149,44 @@ def run_workflows(workflows, sky_path: Path, args, workflow_last_revs=None, copy
 
         try:
             use_shell = IS_WINDOWS and (cmd[0].endswith(".bat") or cmd[0].endswith(".cmd"))
-            is_verbose = args.verbose or getattr(args, "debug", False)
-            result = subprocess.run(
+            is_verbose = getattr(args, "verbose", False) or getattr(args, "debug", False)
+
+            process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE if not is_verbose else None,
-                stderr=subprocess.PIPE if not is_verbose else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                shell=use_shell
+                shell=use_shell,
+                bufsize=1
             )
-            if result.returncode != 0:
-                stdout_str = result.stdout or ""
-                stderr_str = result.stderr or ""
-                raise CopybaraExecutionError(wf, result.returncode, stdout_str, stderr_str)
+
+            stdout_lines = []
+            stderr_lines = []
+
+            def stream_output(pipe, lines_list, stream_dest):
+                for line in iter(pipe.readline, ''):
+                    lines_list.append(line)
+                    if stream_dest:
+                        stream_dest.write(line)
+                        stream_dest.flush()
+                pipe.close()
+
+            import threading
+            t_out = threading.Thread(target=stream_output, args=(process.stdout, stdout_lines, sys.stdout if is_verbose else None))
+            t_err = threading.Thread(target=stream_output, args=(process.stderr, stderr_lines, sys.stderr if is_verbose else None))
+
+            t_out.start()
+            t_err.start()
+
+            returncode = process.wait()
+            t_out.join()
+            t_err.join()
+
+            stdout_str = "".join(stdout_lines)
+            stderr_str = "".join(stderr_lines)
+
+            if returncode != 0:
+                raise CopybaraExecutionError(wf, returncode, stdout_str, stderr_str)
         except CopybaraExecutionError:
             raise
         except (subprocess.SubprocessError, OSError) as e:

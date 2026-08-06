@@ -28,6 +28,7 @@ TEST_SCENARIOS = [
     ("test_12_mandatory_target_and_no_sync.py", "Test Scenario 12: Mandatory Target & Sync Removal"),
     ("test_14_cross_platfrom_paths.py", "Test Scenario 13: Cross-Platform Paths & Normalization"),
     ("test_15_copybara_path_manifest_resolution.py", "Test Scenario 14: Manifest Copybara Path Resolution"),
+    ("test_16_copybara_exit_codes_and_suggestions.py", "Test Scenario 15: Copybara Exit Codes & Command Suggestions"),
 ]
 
 

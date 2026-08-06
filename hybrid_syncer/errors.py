@@ -20,6 +20,18 @@ class ExitCode(IntEnum):
     REPO_ACCESS_ERROR = 8         # Remote/local repo missing or inaccessible
 
 
+COPYBARA_EXIT_CODES = {
+    0: ("SUCCESS", "Everything went well and the migration was successful."),
+    1: ("COMMAND_LINE_ERROR", "An error parsing the command line (wrong arguments/options)."),
+    2: ("CONFIGURATION_ERROR", "An error in the configuration, flag values, or user input."),
+    3: ("REPOSITORY_ERROR", "An error that happened during repository manipulation."),
+    4: ("NO_OP", "Execution resulted in no-op (no changes were made in the destination)."),
+    8: ("INTERRUPTED", "Execution was interrupted."),
+    30: ("ENVIRONMENT_ERROR", "Error due to the environment (network access, filesystem, git remote)."),
+    31: ("INTERNAL_ERROR", "Unexpected internal Copybara error."),
+}
+
+
 class SyncerError(Exception):
     """Base exception for hybrid-syncer errors."""
 
@@ -47,19 +59,42 @@ class RepoAccessError(SyncerError):
 class CopybaraExecutionError(SyncerError):
     """Subprocess execution error when Copybara fails."""
 
-    def __init__(self, workflow: str, returncode: int, stdout: str = "", stderr: str = ""):
+    def __init__(self, workflow: str, returncode: int, stdout: str = "", stderr: str = "", suggested_command: str | None = None):
+        code_info = COPYBARA_EXIT_CODES.get(returncode, ("UNKNOWN_ERROR", "Unknown Copybara exit code."))
+        code_name, code_desc = code_info
+
         details = []
+        details.append(f"Copybara Exit Code: {returncode} ({code_name}) - {code_desc}")
+
+        combined_output = f"{stdout}\n{stderr}"
+        suggestion = suggested_command
+
+        if not suggestion:
+            if "GitOrigin-RevId could not be found" in combined_output or "--init-history" in combined_output:
+                import sys
+                cmd_args = list(sys.argv)
+                if "--init-history" not in cmd_args:
+                    cmd_args.append("--init-history")
+                suggestion = " ".join(cmd_args)
+
+        if suggestion:
+            details.append(f"\n💡 Suggested command:\n  {suggestion}")
+
         if stderr and stderr.strip():
-            details.append(f"Stderr:\n{stderr.strip()}")
+            details.append(f"\nStderr:\n{stderr.strip()}")
         if stdout and stdout.strip():
-            details.append(f"Stdout:\n{stdout.strip()}")
+            details.append(f"\nStdout:\n{stdout.strip()}")
+
         det_str = ("\n" + "\n".join(details)) if details else ""
         msg = f"Error executing Copybara workflow '{workflow}' (exit code {returncode}){det_str}"
         super().__init__(msg, exit_code=ExitCode.COPYBARA_EXECUTION_ERROR, category="COPYBARA EXECUTION ERROR")
         self.workflow = workflow
         self.returncode = returncode
+        self.copybara_exit_code_name = code_name
+        self.copybara_exit_code_desc = code_desc
         self.stdout = stdout
         self.stderr = stderr
+        self.suggested_command = suggestion
 
 
 # --- Circuit Breaker / Guard Exceptions ---
