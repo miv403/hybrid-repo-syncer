@@ -44,7 +44,7 @@ targets:
 def clean_path(p) -> str:
     if not p or p == ".":
         return ""
-    return str(p).strip("/")
+    return str(p).replace("\\", "/").strip("/")
 
 
 def load_manifest(config_path: Path) -> dict:

@@ -12,11 +12,50 @@ from hybrid_syncer.errors import ManifestError, RepoAccessError
 from hybrid_syncer.temp_manager import TempRepoCache, get_repo_path
 
 
+IS_WINDOWS = sys.platform == "win32" or sys.platform == "cygwin"
+
+
+def normalize_path_for_git(path: str | Path) -> str:
+    """
+    Normalizes a file system path for Git CLI and Starlark specs.
+    
+    On Windows (and cross-platform), converts backslashes '\\' to forward slashes '/' 
+    so Git CLI and Starlark parser handle paths cleanly without misinterpreting 
+    backslashes as escape sequences (e.g. \\t, \\n).
+    Remote URLs (http://, https://, git@, ssh://) are left untouched.
+    """
+    if not path:
+        return ""
+    path_str = str(path)
+    if is_remote_url(path_str):
+        return path_str
+    # Convert Windows backslashes to POSIX-style forward slashes for clean Git & Starlark handling
+    return path_str.replace("\\", "/")
+
+
+def sanitize_git_arg(arg: str | Path) -> str:
+    """
+    Sanitizes an argument for Git command execution.
+    Converts Path objects or Windows backslash paths into clean POSIX forward-slash strings.
+    """
+    if isinstance(arg, Path):
+        return arg.as_posix()
+    arg_str = str(arg)
+    if not is_remote_url(arg_str) and "\\" in arg_str:
+        return arg_str.replace("\\", "/")
+    return arg_str
+
+
 def run_git(args: list, cwd=None) -> tuple[int, str, str]:
     """Helper to execute git commands and return (returncode, stdout, stderr)."""
+    sanitized_args = [sanitize_git_arg(arg) for arg in args]
+    
+    if cwd:
+        cwd = sanitize_git_arg(cwd)
+        
     try:
         res = subprocess.run(
-            ["git"] + args,
+            ["git"] + sanitized_args,
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -64,7 +103,8 @@ def resolve_repo_url(url: str, base_dir: Path) -> str:
     p = Path(url)
     if not p.is_absolute():
         p = (base_dir / p).resolve()
-    return str(p)
+        
+    return normalize_path_for_git(p)
 
 
 def check_clean_workspace(repo_url: str) -> list[str]:
