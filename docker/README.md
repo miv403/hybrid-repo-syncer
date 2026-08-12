@@ -1,9 +1,41 @@
-# trigger server and automatic syncer
+# Hybrid Syncer Container Environment
 
-automatically syncs two gitea instance repos with webhooks and minimal http server.
+Standalone Ubuntu 24.04-based container environment with Java 21+ JRE, Python 3, PyYAML, Git, and patched Copybara pre-installed.
+
+## Building the Image
+
+Using Docker:
 
 ```bash
-docker compose up -d --build
-docker compose logs -f syncer-runner
-docker compose down
+docker build -t hybrid-syncer:latest -f docker/Dockerfile .
+```
+
+Or using Docker Compose:
+
+```bash
+docker compose build
+```
+
+## Usage Examples
+
+### Direct Execution via `docker run`
+
+Mount your workspace root into `/app`:
+
+```bash
+# Print help
+docker run --rm -v $(pwd):/app hybrid-syncer:latest --help
+
+# Run sync using manifest
+docker run --rm -v $(pwd):/app hybrid-syncer:latest --manifest sync-manifest.yaml
+```
+
+### Execution via `docker compose`
+
+```bash
+# Print help
+docker compose run --rm syncer --help
+
+# Run sync using manifest
+docker compose run --rm syncer --manifest sync-manifest.yaml
 ```
