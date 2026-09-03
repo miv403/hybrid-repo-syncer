@@ -2,7 +2,24 @@
 
 `hybrid-syncer` is a lightweight Python CLI wrapper around [Copybara](https://github.com/google/copybara). It simplifies multi-repository code synchronization by reading a declarative YAML manifest (`sync-manifest.yaml`), automatically generating Copybara Starlark (`copy.bara.sky`) configuration files, executing `push`, `pull`, `list`, `status`, and `doctor` operations.
 
-<img src="img/diagram.png" width="500 px">
+
+<table>
+<tr>
+<th>
+
+<img src="img/diagram-1-square.png" width="350 px">
+</th>
+<th>
+
+<img src="img/diagram-2-square.png" width="350 px">
+ </th>
+</tr>
+<tr>
+<td> hybrid repo approach </td>
+<td> monorepo, backup and mirror approach </td>
+</tr>
+</table>
+
 
 ## Prerequisites & Installation
 
